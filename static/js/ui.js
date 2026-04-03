@@ -138,13 +138,11 @@ export async function loadEventsDropdowns() {
             generalOptions += '</optgroup>';
         }
 
-        // ✅ ИСПРАВЛЕНО: нормальный массив
         [
             'dept-event-id',
             'group-event-id',
             'export-event-id',
             'editor-event-id',
-            'position-event-id',
         ].forEach(id => {
             const el = document.getElementById(id);
             if (el) el.innerHTML = generalOptions;
@@ -171,8 +169,6 @@ export async function loadEventsDropdowns() {
 
     } catch (error) {
         console.error('loadEventsDropdowns:', error);
-
-        // 💡 небольшой UX бонус
         if (typeof window.showSnackbar === 'function') {
             window.showSnackbar('Ошибка загрузки списков', 'error');
         }
@@ -261,7 +257,6 @@ export function renderDeptEventCards(events) {
     }).join('');
 }
 
-// Обновляет прогресс-бар карточки после загрузки слотов
 export function updateDeptCardProgress(eventId, slots) {
     const fill  = document.getElementById(`progress-fill-${eventId}`);
     const label = document.getElementById(`progress-label-${eventId}`);
@@ -278,8 +273,8 @@ export function updateDeptCardProgress(eventId, slots) {
 
 // ─── База людей (admin: вкладка «База людей») ─────────────────────────────────
 
-let _personsData   = [];   // кэш загруженных записей
-let _editingId     = null; // id записи в режиме редактирования
+let _personsData   = [];
+let _editingId     = null;
 let _searchTimeout = null;
 
 export async function loadPersons(searchQuery = '') {
@@ -308,97 +303,86 @@ function esc(v) {
 }
 
 function renderPersonsTable(persons) {
-    const tbody = document.getElementById('persons-tbody');
+    const tbody   = document.getElementById('persons-tbody');
     if (!tbody) return;
+    const isAdmin = window.currentUserRole === 'admin';
 
     if (persons.length === 0) {
         tbody.innerHTML = '';
         return;
     }
 
-    tbody.innerHTML = persons.map(p => `
-        <tr data-person-id="${p.id}" id="person-row-${p.id}">
-            <td style="color:var(--md-on-surface-hint); font-family:var(--md-font-mono); font-size:0.72rem;">${p.id}</td>
-            <td class="person-cell-name">${esc(p.full_name)}</td>
-            <td class="person-cell-rank">${esc(p.rank || '—')}</td>
-            <td class="person-cell-doc">${esc(p.doc_number || '—')}</td>
-            <td>
-                <div style="display:flex;gap:4px;">
-                    <button class="btn btn-outlined btn-xs person-edit-btn" data-person-id="${p.id}" type="button">✎</button>
-                    <button class="btn-tiny-danger person-del-btn" data-person-id="${p.id}" type="button">✕</button>
-                </div>
-            </td>
-        </tr>
-    `).join('');
+    tbody.innerHTML = persons.map(p => {
+        const deptBadge = isAdmin
+            ? `<td><span style="font-size:0.72rem;padding:2px 7px;border-radius:10px;background:var(--md-primary-light);color:var(--md-primary-dark);border:1px solid #c5ddd8;white-space:nowrap;">${esc(formatRole(p.department || '—'))}</span></td>`
+            : '';
+
+        if (_editingId === p.id) {
+            const deptEditCell = isAdmin
+                ? `<td><select id="edit-dept-${p.id}" style="font-size:0.8rem;padding:3px 6px;border:1px solid var(--md-outline);border-radius:var(--md-radius-sm);">
+                        <option value="">— без управления —</option>
+                        ${(window.availableRoles || []).map(r => `<option value="${r}" ${r === p.department ? 'selected' : ''}>${esc(formatRole(r))}</option>`).join('')}
+                   </select></td>`
+                : '';
+
+            return `
+                <tr data-person-id="${p.id}" id="person-row-${p.id}" style="background:var(--md-primary-light);">
+                    <td style="color:var(--md-on-surface-hint);font-family:var(--md-font-mono);font-size:0.72rem;">${p.id}</td>
+                    <td><input id="edit-name-${p.id}" value="${esc(p.full_name)}" style="width:100%;padding:4px 7px;border:1px solid var(--md-outline);border-radius:var(--md-radius-sm);font-size:0.85rem;"></td>
+                    <td><input id="edit-rank-${p.id}" value="${esc(p.rank||'')}" placeholder="Звание" style="width:100%;padding:4px 7px;border:1px solid var(--md-outline);border-radius:var(--md-radius-sm);font-size:0.85rem;"></td>
+                    <td><input id="edit-doc-${p.id}"  value="${esc(p.doc_number||'')}" placeholder="№ Документа" style="width:100%;padding:4px 7px;border:1px solid var(--md-outline);border-radius:var(--md-radius-sm);font-size:0.85rem;"></td>
+                    ${deptEditCell}
+                    <td>
+                        <div style="display:flex;gap:4px;">
+                            <button class="btn btn-filled btn-xs person-save-edit-btn" data-person-id="${p.id}" type="button">✓</button>
+                            <button class="btn btn-outlined btn-xs person-cancel-edit-btn" type="button">✕</button>
+                        </div>
+                    </td>
+                </tr>`;
+        }
+
+        return `
+            <tr data-person-id="${p.id}" id="person-row-${p.id}">
+                <td style="color:var(--md-on-surface-hint);font-family:var(--md-font-mono);font-size:0.72rem;">${p.id}</td>
+                <td class="person-cell-name">${esc(p.full_name)}</td>
+                <td class="person-cell-rank">${esc(p.rank || '—')}</td>
+                <td class="person-cell-doc">${esc(p.doc_number || '—')}</td>
+                ${deptBadge}
+                <td>
+                    <div style="display:flex;gap:4px;">
+                        <button class="btn btn-outlined btn-xs person-edit-btn" data-person-id="${p.id}" type="button">✎</button>
+                        <button class="btn btn-danger btn-xs person-del-btn"  data-person-id="${p.id}" type="button">✕</button>
+                    </div>
+                </td>
+            </tr>`;
+    }).join('');
 }
 
-// Inline редактирование строки
 function startEditRow(personId) {
-    const person = _personsData.find(p => p.id === personId);
-    if (!person) return;
-
-    // Если редактировали другую строку — восстанавливаем её
     if (_editingId && _editingId !== personId) cancelEditRow();
-
     _editingId = personId;
-    const row  = document.getElementById(`person-row-${personId}`);
-    if (!row) return;
-
-    row.innerHTML = `
-        <td style="color:var(--md-on-surface-hint); font-family:var(--md-font-mono); font-size:0.72rem;">${person.id}</td>
-        <td><input class="person-inline-input" id="edit-name-${personId}"  value="${esc(person.full_name)}"  placeholder="ФИО"></td>
-        <td><input class="person-inline-input" id="edit-rank-${personId}"  value="${esc(person.rank || '')}"  placeholder="Звание"></td>
-        <td><input class="person-inline-input" id="edit-doc-${personId}"   value="${esc(person.doc_number || '')}" placeholder="№ документа"></td>
-        <td>
-            <div style="display:flex;gap:4px;">
-                <button class="btn btn-filled btn-xs person-save-edit-btn" data-person-id="${personId}" type="button">✓</button>
-                <button class="btn btn-outlined btn-xs person-cancel-edit-btn" data-person-id="${personId}" type="button">✕</button>
-            </div>
-        </td>
-    `;
-    document.getElementById(`edit-name-${personId}`)?.focus();
+    renderPersonsTable(_personsData);
+    setTimeout(() => document.getElementById(`edit-name-${personId}`)?.focus(), 50);
 }
 
 function cancelEditRow() {
-    if (!_editingId) return;
-    const person = _personsData.find(p => p.id === _editingId);
-    if (person) {
-        const row = document.getElementById(`person-row-${_editingId}`);
-        if (row) {
-            row.innerHTML = `
-                <td style="color:var(--md-on-surface-hint); font-family:var(--md-font-mono); font-size:0.72rem;">${person.id}</td>
-                <td class="person-cell-name">${esc(person.full_name)}</td>
-                <td class="person-cell-rank">${esc(person.rank || '—')}</td>
-                <td class="person-cell-doc">${esc(person.doc_number || '—')}</td>
-                <td>
-                    <div style="display:flex;gap:4px;">
-                        <button class="btn btn-outlined btn-xs person-edit-btn" data-person-id="${person.id}" type="button">✎</button>
-                        <button class="btn-tiny-danger person-del-btn" data-person-id="${person.id}" type="button">✕</button>
-                    </div>
-                </td>
-            `;
-        }
-    }
     _editingId = null;
+    renderPersonsTable(_personsData);
 }
 
 async function saveEditRow(personId) {
     const name = document.getElementById(`edit-name-${personId}`)?.value?.trim();
     const rank = document.getElementById(`edit-rank-${personId}`)?.value?.trim();
     const doc  = document.getElementById(`edit-doc-${personId}`)?.value?.trim();
+    const dept = document.getElementById(`edit-dept-${personId}`)?.value ?? undefined;
 
-    if (!name) {
-        window.showSnackbar?.('ФИО не может быть пустым', 'error');
-        return;
-    }
+    if (!name) { window.showSnackbar?.('ФИО не может быть пустым', 'error'); return; }
 
     try {
-        const updated = await api.put(`/persons/${personId}`, {
-            full_name:  name,
-            rank:       rank || null,
-            doc_number: doc  || null,
-        });
-        // Обновляем кэш
+        const payload = { full_name: name, rank: rank || null, doc_number: doc || null };
+        if (dept !== undefined) payload.department = dept || null;
+
+        const updated = await api.put(`/persons/${personId}`, payload);
         const idx = _personsData.findIndex(p => p.id === personId);
         if (idx !== -1) _personsData[idx] = updated;
         _editingId = null;
@@ -422,51 +406,58 @@ async function deletePerson(personId) {
     }
 }
 
-// Инициализация обработчиков вкладки «База людей»
 export function initPersonsTab() {
+    const isAdmin = window.currentUserRole === 'admin';
+
+    // Показываем колонку «Управление» только админу
+    if (isAdmin) {
+        document.getElementById('persons-dept-col')?.classList.remove('hidden');
+        document.querySelector('.admin-only-field')?.classList.remove('hidden');
+        // Заполняем select управлений в форме добавления
+        const deptSelect = document.getElementById('person-dept');
+        if (deptSelect && window.availableRoles) {
+            window.availableRoles.forEach(r => {
+                const opt = document.createElement('option');
+                opt.value = r; opt.textContent = formatRole(r);
+                deptSelect.appendChild(opt);
+            });
+        }
+    }
+
     // Поиск с дебаунсом
     document.getElementById('persons-search')?.addEventListener('input', (e) => {
         clearTimeout(_searchTimeout);
         _searchTimeout = setTimeout(() => loadPersons(e.target.value.trim()), 300);
     });
 
-    // --- ЛОГИКА ИМПОРТА EXCEL ---
-    const importBtn = document.getElementById('persons-import-btn');
+    // Импорт Excel
+    const importBtn   = document.getElementById('persons-import-btn');
     const importInput = document.getElementById('persons-import-input');
-
     if (importBtn && importInput) {
-        importBtn.addEventListener('click', () => {
-            importInput.click();
-        });
-
+        importBtn.addEventListener('click', () => importInput.click());
         importInput.addEventListener('change', async (e) => {
             const file = e.target.files[0];
             if (!file) return;
-
             if (!file.name.endsWith('.xlsx') && !file.name.endsWith('.xls')) {
                 window.showSnackbar?.('Пожалуйста, выберите файл .xlsx', 'error');
                 importInput.value = '';
                 return;
             }
-
             const formData = new FormData();
             formData.append('file', file);
-
-            const originalText = importBtn.innerHTML;
+            const orig = importBtn.innerHTML;
             importBtn.innerHTML = '⏳ Загрузка...';
             importBtn.disabled = true;
-
             try {
                 const res = await api.upload('/persons/import', formData);
                 await loadPersons(document.getElementById('persons-search')?.value?.trim() || '');
                 window.showSnackbar?.(`Готово! Добавлено: ${res.added}, Обновлено: ${res.updated}`, 'success', 6000);
             } catch (err) {
-                console.error('Import error:', err);
                 window.showSnackbar?.(err.message || 'Ошибка при импорте файла', 'error');
             } finally {
-                importBtn.innerHTML = originalText;
+                importBtn.innerHTML = orig;
                 importBtn.disabled = false;
-                importInput.value = '';
+                importInput.value  = '';
             }
         });
     }
@@ -474,15 +465,20 @@ export function initPersonsTab() {
     // Показать/скрыть форму добавления
     document.getElementById('persons-add-btn')?.addEventListener('click', () => {
         const form = document.getElementById('persons-add-form');
-        form?.classList.toggle('hidden');
-        if (!form?.classList.contains('hidden')) {
-            document.getElementById('person-fullname')?.focus();
+        if (form) {
+            form.classList.toggle('hidden');
+            form.style.display = form.classList.contains('hidden') ? 'none' : 'flex';
+            if (!form.classList.contains('hidden')) document.getElementById('person-fullname')?.focus();
         }
     });
 
     document.getElementById('persons-cancel-btn')?.addEventListener('click', () => {
-        document.getElementById('persons-add-form')?.classList.add('hidden');
-        clearAddForm();
+        const form = document.getElementById('persons-add-form');
+        form?.classList.add('hidden');
+        if (form) form.style.display = 'none';
+        ['person-fullname','person-rank','person-doc'].forEach(id => {
+            const el = document.getElementById(id); if (el) el.value = '';
+        });
     });
 
     // Сохранить новую запись
@@ -490,42 +486,36 @@ export function initPersonsTab() {
         const name = document.getElementById('person-fullname')?.value?.trim();
         const rank = document.getElementById('person-rank')?.value?.trim();
         const doc  = document.getElementById('person-doc')?.value?.trim();
+        const dept = isAdmin ? (document.getElementById('person-dept')?.value || null) : null;
 
-        if (!name) {
-            window.showSnackbar?.('Введите ФИО', 'error');
-            return;
-        }
+        if (!name) { window.showSnackbar?.('Введите ФИО', 'error'); return; }
 
         try {
-            await api.post('/persons', { full_name: name, rank: rank || null, doc_number: doc || null });
-            clearAddForm();
-            document.getElementById('persons-add-form')?.classList.add('hidden');
+            await api.post('/persons', { full_name: name, rank: rank || null, doc_number: doc || null, department: dept });
+            ['person-fullname','person-rank','person-doc'].forEach(id => {
+                const el = document.getElementById(id); if (el) el.value = '';
+            });
+            const form = document.getElementById('persons-add-form');
+            form?.classList.add('hidden');
+            if (form) form.style.display = 'none';
             await loadPersons(document.getElementById('persons-search')?.value?.trim() || '');
             window.showSnackbar?.('Добавлено в базу', 'success');
         } catch (err) {
-            const msg = err.status === 409 ? 'Человек с таким ФИО уже есть' : 'Ошибка добавления';
-            window.showSnackbar?.(msg, 'error');
+            window.showSnackbar?.(err.status === 409 ? 'Человек с таким ФИО уже есть' : 'Ошибка добавления', 'error');
         }
     });
 
-    // Делегирование — таблица (редактирование / удаление)
+    // Делегирование — таблица
     document.getElementById('persons-tbody')?.addEventListener('click', (e) => {
-        const editBtn   = e.target.closest('.person-edit-btn');
-        const delBtn    = e.target.closest('.person-del-btn');
-        const saveEdit  = e.target.closest('.person-save-edit-btn');
+        const editBtn    = e.target.closest('.person-edit-btn');
+        const delBtn     = e.target.closest('.person-del-btn');
+        const saveEdit   = e.target.closest('.person-save-edit-btn');
         const cancelEdit = e.target.closest('.person-cancel-edit-btn');
 
         if (editBtn)    startEditRow(parseInt(editBtn.dataset.personId));
         if (delBtn)     deletePerson(parseInt(delBtn.dataset.personId));
         if (saveEdit)   saveEditRow(parseInt(saveEdit.dataset.personId));
         if (cancelEdit) cancelEditRow();
-    });
-}
-
-function clearAddForm() {
-    ['person-fullname', 'person-rank', 'person-doc'].forEach(id => {
-        const el = document.getElementById(id);
-        if (el) el.value = '';
     });
 }
 

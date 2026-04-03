@@ -28,7 +28,6 @@ class Event(Base):
     columns_config = Column(Text, nullable=True)
 
     groups    = relationship("Group",    back_populates="event", cascade="all, delete-orphan")
-    positions = relationship("Position", back_populates="event", cascade="all, delete-orphan")
 
     def get_columns(self) -> list:
         if self.columns_config:
@@ -57,12 +56,8 @@ class Group(Base):
 
 class Position(Base):
     __tablename__ = "positions"
-
-    id       = Column(Integer, primary_key=True, index=True)
-    event_id = Column(Integer, ForeignKey("events.id"), nullable=False)
-    name     = Column(String, nullable=False)
-
-    event = relationship("Event", back_populates="positions")
+    id   = Column(Integer, primary_key=True, index=True)
+    name = Column(String, nullable=False, unique=True)
     slots = relationship("Slot", back_populates="position")
 
 

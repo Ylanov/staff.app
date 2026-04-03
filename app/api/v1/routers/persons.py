@@ -1,18 +1,18 @@
 # app/api/v1/routers/persons.py
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+import io
+from typing import List, Optional
+import openpyxl
+
+from fastapi import APIRouter, Depends, HTTPException, Query, status, UploadFile, File
 from sqlalchemy.orm import Session
 from sqlalchemy.exc import IntegrityError
 from pydantic import BaseModel, Field, ConfigDict
-from typing import List, Optional
 
 from app.db.database import get_db
 from app.models.person import Person
 from app.models.user import User
 from app.api.dependencies import get_current_user, get_current_active_admin
-import io
-from fastapi import APIRouter, Depends, HTTPException, Query, status, UploadFile, File
-import openpyxl
 
 router = APIRouter()
 
@@ -20,22 +20,25 @@ router = APIRouter()
 # ─── Схемы ────────────────────────────────────────────────────────────────────
 
 class PersonCreate(BaseModel):
-    full_name:  str           = Field(..., min_length=2, max_length=300, strip_whitespace=True)
-    rank:       Optional[str] = Field(None, max_length=100, strip_whitespace=True)
+    full_name: str = Field(..., min_length=2, max_length=300, strip_whitespace=True)
+    rank: Optional[str] = Field(None, max_length=100, strip_whitespace=True)
     doc_number: Optional[str] = Field(None, max_length=100, strip_whitespace=True)
+    department: Optional[str] = Field(None, max_length=100, strip_whitespace=True)
 
 
 class PersonUpdate(BaseModel):
-    full_name:  Optional[str] = Field(None, min_length=2, max_length=300, strip_whitespace=True)
-    rank:       Optional[str] = Field(None, max_length=100, strip_whitespace=True)
+    full_name: Optional[str] = Field(None, min_length=2, max_length=300, strip_whitespace=True)
+    rank: Optional[str] = Field(None, max_length=100, strip_whitespace=True)
     doc_number: Optional[str] = Field(None, max_length=100, strip_whitespace=True)
+    department: Optional[str] = Field(None, max_length=100, strip_whitespace=True)
 
 
 class PersonResponse(BaseModel):
-    id:         int
-    full_name:  str
-    rank:       Optional[str] = None
+    id: int
+    full_name: str
+    rank: Optional[str] = None
     doc_number: Optional[str] = None
+    department: Optional[str] = None
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -48,42 +51,46 @@ class PersonResponse(BaseModel):
     summary="Поиск человека по ФИО (для автодополнения)",
 )
 def search_persons(
-        q:            str     = Query(..., min_length=2, description="Часть ФИО для поиска"),
-        limit:        int     = Query(10, ge=1, le=50),
-        db:           Session = Depends(get_db),
-        current_user: User    = Depends(get_current_user),
+        q: str = Query(..., min_length=2, description="Часть ФИО для поиска"),
+        limit: int = Query(10, ge=1, le=50),
+        db: Session = Depends(get_db),
+        current_user: User = Depends(get_current_user),
 ):
     """
     Возвращает людей чьё ФИО содержит строку q.
-    Используется для автодополнения в полях ввода.
-    Минимум 2 символа чтобы не грузить БД пустыми запросами.
     """
-    return (
-        db.query(Person)
-        .filter(Person.full_name.ilike(f"%{q}%"))
-        .order_by(Person.full_name)
-        .limit(limit)
-        .all()
-    )
+    query = db.query(Person).filter(Person.full_name.ilike(f"%{q}%"))
+
+    # Управление видит только своих людей в автодополнении
+    if current_user.role != "admin":
+        query = query.filter(Person.department == current_user.username)
+
+    return query.order_by(Person.full_name).limit(limit).all()
 
 
-# ─── CRUD (только администратор) ──────────────────────────────────────────────
+# ─── CRUD (Доступно всем, но с разделением по управлениям) ───────────────────
 
 @router.get(
     "",
     response_model=List[PersonResponse],
-    summary="Получить всю базу людей",
+    summary="Получить базу людей",
 )
 def get_all_persons(
-        db:            Session = Depends(get_db),
-        current_admin: User    = Depends(get_current_active_admin),
-        skip:          int     = Query(0, ge=0),
-        limit:         int     = Query(200, ge=1, le=1000),
-        q:             Optional[str] = Query(None, description="Фильтр по ФИО"),
+        db: Session = Depends(get_db),
+        current_user: User = Depends(get_current_user),
+        skip: int = Query(0, ge=0),
+        limit: int = Query(500, ge=1, le=2000),
+        q: Optional[str] = Query(None),
 ):
     query = db.query(Person)
+
+    # Управление видит только своих людей
+    if current_user.role != "admin":
+        query = query.filter(Person.department == current_user.username)
+
     if q:
         query = query.filter(Person.full_name.ilike(f"%{q}%"))
+
     return query.order_by(Person.full_name).offset(skip).limit(limit).all()
 
 
@@ -91,18 +98,17 @@ def get_all_persons(
     "",
     response_model=PersonResponse,
     status_code=status.HTTP_201_CREATED,
-    summary="Добавить человека вручную",
+    summary="Добавить человека",
 )
 def create_person(
-        person_in:     PersonCreate,
-        db:            Session = Depends(get_db),
-        current_admin: User    = Depends(get_current_active_admin),
+        person_in: PersonCreate,
+        db: Session = Depends(get_db),
+        current_user: User = Depends(get_current_user),
 ):
-    existing = (
-        db.query(Person)
-        .filter(Person.full_name.ilike(person_in.full_name))
-        .first()
-    )
+    # Управление может добавлять только себе; у себя department = свой username
+    department = person_in.department if current_user.role == "admin" else current_user.username
+
+    existing = db.query(Person).filter(Person.full_name.ilike(person_in.full_name)).first()
     if existing:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
@@ -113,6 +119,7 @@ def create_person(
         full_name=person_in.full_name,
         rank=person_in.rank or None,
         doc_number=person_in.doc_number or None,
+        department=department,
     )
     db.add(person)
     try:
@@ -133,18 +140,26 @@ def create_person(
     summary="Обновить данные человека",
 )
 def update_person(
-        person_id:     int,
-        person_in:     PersonUpdate,
-        db:            Session = Depends(get_db),
-        current_admin: User    = Depends(get_current_active_admin),
+        person_id: int,
+        person_in: PersonUpdate,
+        db: Session = Depends(get_db),
+        current_user: User = Depends(get_current_user),
 ):
     person = db.query(Person).filter(Person.id == person_id).first()
     if not person:
-        raise HTTPException(status_code=404, detail="Человек не найден")
+        raise HTTPException(status_code=404, detail="Запись не найдена")
 
-    update_data = person_in.model_dump(exclude_unset=True)
-    for key, value in update_data.items():
-        setattr(person, key, value if value != "" else None)
+    # Управление может редактировать только своих
+    if current_user.role != "admin" and person.department != current_user.username:
+        raise HTTPException(status_code=403, detail="Нет доступа")
+
+    if person_in.full_name is not None: person.full_name = person_in.full_name
+    if person_in.rank is not None: person.rank = person_in.rank or None
+    if person_in.doc_number is not None: person.doc_number = person_in.doc_number or None
+
+    # Менять управление может только администратор
+    if person_in.department is not None and current_user.role == "admin":
+        person.department = person_in.department or None
 
     db.commit()
     db.refresh(person)
@@ -156,13 +171,17 @@ def update_person(
     summary="Удалить человека из базы",
 )
 def delete_person(
-        person_id:     int,
-        db:            Session = Depends(get_db),
-        current_admin: User    = Depends(get_current_active_admin),
+        person_id: int,
+        db: Session = Depends(get_db),
+        current_user: User = Depends(get_current_user),
 ):
     person = db.query(Person).filter(Person.id == person_id).first()
     if not person:
         raise HTTPException(status_code=404, detail="Человек не найден")
+
+    # Управление может удалять только своих
+    if current_user.role != "admin" and person.department != current_user.username:
+        raise HTTPException(status_code=403, detail="Нет доступа")
 
     db.delete(person)
     db.commit()
@@ -171,51 +190,35 @@ def delete_person(
 
 # ─── Внутренняя функция: upsert при заполнении слота ─────────────────────────
 
-def upsert_person_from_slot(db: Session, full_name: str, rank: str = None, doc_number: str = None) -> None:
-    """
-    Вызывается из slots.py при сохранении данных пользователем.
-    Если человек уже есть в базе — обновляет его данные (если они стали полнее).
-    Если нет — создаёт новую запись.
-
-    Логика обновления: перезаписываем только если новое значение не пустое.
-    Это предотвращает затирание данных если пользователь частично заполнил поля.
-
-    БАГ-ФИКС: добавлена обработка IntegrityError для защиты от race condition.
-    При одновременном сохранении двух слотов с одинаковым ФИО второй INSERT
-    нарушит уникальный индекс на full_name — перехватываем и откатываемся.
-    commit() делает вызывающая сторона (slots.py), поэтому здесь используем flush().
-    """
+def upsert_person_from_slot(db: Session, full_name: str, rank: str | None, doc_number: str | None,
+                            department: str | None = None) -> None:
+    """Создаёт или обновляет запись в базе людей при сохранении слота."""
     if not full_name or not full_name.strip():
         return
 
     full_name = full_name.strip()
+    person = db.query(Person).filter(Person.full_name.ilike(full_name)).first()
 
-    existing = (
-        db.query(Person)
-        .filter(Person.full_name.ilike(full_name))
-        .first()
-    )
-
-    if existing:
-        if rank and rank.strip():
-            existing.rank = rank.strip()
-        if doc_number and doc_number.strip():
-            existing.doc_number = doc_number.strip()
+    if person:
+        if rank and not person.rank:       person.rank = rank.strip()
+        if doc_number and not person.doc_number: person.doc_number = doc_number.strip()
+        if department and not person.department: person.department = department.strip()
     else:
         person = Person(
             full_name=full_name,
-            rank=rank.strip() if rank and rank.strip() else None,
-            doc_number=doc_number.strip() if doc_number and doc_number.strip() else None,
+            rank=rank.strip() if rank else None,
+            doc_number=doc_number.strip() if doc_number else None,
+            department=department.strip() if department else None
         )
         db.add(person)
-        try:
-            # flush() проверяет уникальность ещё до commit() вызывающей стороны
-            db.flush()
-        except IntegrityError:
-            # Другой запрос успел создать запись — откатываем только этот flush,
-            # основная транзакция (обновление слота) продолжается.
-            db.rollback()
 
+    try:
+        db.flush()
+    except IntegrityError:
+        db.rollback()
+
+
+# ─── Массовый импорт из Excel (оставлен только для админа) ───────────────────
 
 @router.post(
     "/import",
@@ -237,14 +240,12 @@ async def import_persons_from_excel(
     except Exception:
         raise HTTPException(status_code=400, detail="Не удалось прочитать Excel файл")
 
-    # Выгружаем текущую базу в словарь для быстрого O(1) поиска (чтобы не делать 5000 SELECT'ов)
     existing_records = {p.full_name.lower(): p for p in db.query(Person).all()}
 
     new_persons = []
     updated_count = 0
     added_count = 0
 
-    # Читаем Excel (начиная со 2-й строки, игнорируя заголовки)
     for row in sheet.iter_rows(min_row=2, values_only=True):
         if not row or not row[0]:
             continue
@@ -256,29 +257,25 @@ async def import_persons_from_excel(
         rank = str(row[1]).strip() if len(row) > 1 and row[1] is not None else None
         doc = str(row[2]).strip() if len(row) > 2 and row[2] is not None else None
 
-        # Очищаем пустые строки
         if rank == "None" or not rank: rank = None
         if doc == "None" or not doc: doc = None
 
         existing_person = existing_records.get(full_name.lower())
 
         if existing_person:
-            # Обновляем данные, только если в Excel есть новые значения
             changed = False
-            if rank and existing_person.rank != rank:
+            if rank and not existing_person.rank:
                 existing_person.rank = rank
                 changed = True
-            if doc and existing_person.doc_number != doc:
+            if doc and not existing_person.doc_number:
                 existing_person.doc_number = doc
                 changed = True
 
             if changed:
                 updated_count += 1
         else:
-            # Создаем нового
             new_p = Person(full_name=full_name, rank=rank, doc_number=doc)
             new_persons.append(new_p)
-            # Добавляем в словарь, чтобы избежать дублей внутри самого Excel-файла
             existing_records[full_name.lower()] = new_p
 
     if new_persons:

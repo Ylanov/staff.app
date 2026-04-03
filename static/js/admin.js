@@ -76,7 +76,7 @@ export async function handleAddGroup() {
 
 export async function handleDeleteEvent() {
     if (!currentEditorEventId) return;
-    if (!confirm('Вы уверены, что хотите удалить этот список?\n\nВсе группы, добавленные должности и заполненные управлениями данные будут безвозвратно удалены!')) return;
+    if (!confirm('Вы уверены, что хотите удалить этот список?\n\nВсе группы и заполненные управлениями данные будут безвозвратно удалены!')) return;
     try {
         await api.delete(`/admin/events/${currentEditorEventId}`);
         notify('Список успешно удалён');
@@ -87,15 +87,15 @@ export async function handleDeleteEvent() {
     } catch (e) { console.error('handleDeleteEvent:', e); showError('Ошибка при удалении списка'); }
 }
 
-// ─── Управление должностями ───────────────────────────────────────────────────
+// ─── Управление должностями (глобальные) ─────────────────────────────────────
 
 export async function loadAndRenderPositions() {
-    const eventId   = el('position-event-id').value;
     const container = el('positions-list');
     if (!container) return;
-    if (!eventId) { container.innerHTML = '<p class="hint">Выберите список</p>'; return; }
     try {
-        const positions = await api.get(`/admin/events/${eventId}/positions`);
+        const positions = await api.get('/admin/positions');
+        // Обновляем глобальный кэш — чтобы редактор сразу видел актуальный список
+        availablePositions = positions;
         container.innerHTML = positions.length
             ? positions.map(p => `
                 <div class="position-item">
@@ -107,15 +107,19 @@ export async function loadAndRenderPositions() {
 }
 
 export async function handleAddPosition() {
-    const eventId   = el('position-event-id').value;
     const nameInput = el('new-position-name');
     const name      = nameInput?.value.trim();
-    if (!eventId || !name) return showError('Сначала выберите список, затем введите название должности');
+    if (!name) return showError('Введите название должности');
     try {
-        await api.post(`/admin/events/${eventId}/positions`, { name });
+        await api.post('/admin/positions', { name });
         nameInput.value = '';
         await loadAndRenderPositions();
-    } catch (e) { console.error('handleAddPosition:', e); showError('Ошибка добавления должности'); }
+        notify('Должность добавлена');
+    } catch (e) {
+        console.error('handleAddPosition:', e);
+        if (e.status === 409) return showError('Должность с таким названием уже существует');
+        showError('Ошибка добавления должности');
+    }
 }
 
 export async function handleDeletePosition(positionId) {
@@ -154,14 +158,12 @@ function buildCell(col, slot) {
         case 'select_dept':
             return `<td><select id="dept-${slot.id}">${buildDeptOptions(slot.department)}</select></td>`;
 
-        default: { // text + кастомные
+        default: {
             let inputId, rawVal;
             if (FIELD_INPUT_PREFIX[col.key]) {
-                // Стандартный текстовый столбец — legacy-id для совместимости с автодополнением
                 inputId = `${FIELD_INPUT_PREFIX[col.key]}-${slot.id}`;
                 rawVal  = slot[col.key] ?? '';
             } else {
-                // Кастомный столбец — читаем из extra_data
                 inputId = `cx-${col.key}-${slot.id}`;
                 rawVal  = slot.extra_data?.[col.key] ?? '';
             }
@@ -175,14 +177,14 @@ async function renderAdminEditor(eventId, isSilentUpdate = false) {
     const focusValue = isSilentUpdate ? document.activeElement?.value : null;
 
     try {
+        // Должности теперь глобальные — грузим из /admin/positions
         const [positions, data] = await Promise.all([
-            api.get(`/admin/events/${eventId}/positions`),
+            api.get('/admin/positions'),
             api.get(`/admin/events/${eventId}/full`),
         ]);
 
         availablePositions = positions;
 
-        // Сохраняем конфигурацию столбцов
         const allCols = data.columns || DEFAULT_COLUMNS;
         currentColumns = [...allCols].sort((a, b) => a.order - b.order);
         const visibleCols = currentColumns.filter(c => c.visible !== false);
@@ -205,25 +207,10 @@ async function renderAdminEditor(eventId, isSilentUpdate = false) {
                 statusBtn.classList.add('hidden');
             } else {
                 statusBtn.classList.remove('hidden');
-                const isActive       = data.event.status === 'active';
-                statusBtn.textContent    = isActive ? '⏸ Деактивировать' : '▶ Активировать для управлений';
-                statusBtn.className      = `btn btn-sm ${isActive ? 'btn-outlined' : 'btn-success'}`;
+                const isActive        = data.event.status === 'active';
+                statusBtn.textContent = isActive ? '⏸ Деактивировать' : '▶ Активировать для управлений';
+                statusBtn.className   = `btn btn-sm ${isActive ? 'btn-outlined' : 'btn-success'}`;
                 statusBtn.dataset.status = data.event.status;
-            }
-        }
-
-        // Инжектируем кнопку «⚙ Столбцы» в тулбар (только один раз)
-        if (!el('editor-columns-btn')) {
-            const toolbar = document.querySelector('.editor-toolbar__right');
-            if (toolbar) {
-                const colBtn       = document.createElement('button');
-                colBtn.id          = 'editor-columns-btn';
-                colBtn.type        = 'button';
-                colBtn.className   = 'btn btn-outlined btn-sm';
-                colBtn.style.marginTop = '18px';
-                colBtn.innerHTML   = `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right:4px;"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>Столбцы`;
-                colBtn.addEventListener('click', openColumnEditor);
-                toolbar.appendChild(colBtn);
             }
         }
 
@@ -299,7 +286,6 @@ export async function updateAdminSlot(slotId) {
         doc_number:  el(`doc-${slotId}`)?.value  || null,
     };
 
-    // Собираем значения кастомных столбцов → extra_data
     const extraData = {};
     let hasExtra = false;
     currentColumns.forEach(col => {
@@ -402,17 +388,20 @@ function _renderColumnRows(columns) {
     const container = el('col-editor-rows');
     if (!container) return;
 
+    const eyeOn  = `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>`;
+    const eyeOff = `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/></svg>`;
+
     container.innerHTML = columns.map((col, idx) => {
         const isBuiltin = BUILTIN_KEYS.has(col.key);
         const isVisible = col.visible !== false;
         const isFirst   = idx === 0;
         const isLast    = idx === columns.length - 1;
 
-        const eyeOn  = `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>`;
-        const eyeOff = `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/></svg>`;
-
         return `
-        <div class="col-row" data-idx="${idx}" data-key="${esc(col.key)}" data-type="${esc(col.type||'text')}"
+        <div class="col-row"
+             data-idx="${idx}"
+             data-key="${esc(col.key)}"
+             data-type="${esc(col.type || 'text')}"
              style="display:flex;align-items:center;gap:6px;padding:7px 10px;
                     background:var(--md-surface-variant);border-radius:var(--md-radius-sm);
                     border:1px solid ${isVisible ? 'var(--md-outline-variant)' : 'transparent'};
@@ -449,6 +438,10 @@ function _renderColumnRows(columns) {
         btn.addEventListener('click', () => _deleteColumnRow(parseInt(btn.dataset.idx))));
 }
 
+/**
+ * Читает текущее состояние строк редактора из DOM.
+ * Ключ и тип берём из data-атрибутов строк — они не меняются при перестановке.
+ */
 function _getColumnsFromModal() {
     return Array.from(document.querySelectorAll('#col-editor-rows .col-row')).map((row, idx) => ({
         key:     row.dataset.key,
@@ -456,6 +449,8 @@ function _getColumnsFromModal() {
         type:    row.dataset.type || 'text',
         order:   idx,
         visible: row.querySelector('.col-row-vis')?.classList.contains('btn-filled') ?? true,
+        custom:  !BUILTIN_KEYS.has(row.dataset.key),
+        width:   120,
     }));
 }
 
@@ -484,7 +479,7 @@ function _deleteColumnRow(idx) {
 
 function _addColumnRow() {
     const cols = _getColumnsFromModal();
-    cols.push({ key: `cx_${Date.now()}`, label: 'Новый столбец', type: 'text', order: cols.length, visible: true });
+    cols.push({ key: `cx_${Date.now()}`, label: 'Новый столбец', type: 'text', order: cols.length, visible: true, custom: true, width: 120 });
     _renderColumnRows(cols);
     const rows = document.querySelectorAll('#col-editor-rows .col-row');
     rows[rows.length - 1]?.querySelector('.col-row-label')?.focus();
@@ -617,6 +612,12 @@ export async function toggleEventStatus() {
 
 export function listenForUpdates() {
     loadDutyOfficer();
+    // Загружаем глобальные должности при старте
+    loadAndRenderPositions();
+
+    // Кнопка «Столбцы» статически в HTML — привязываем обработчик один раз здесь
+    el('editor-columns-btn')?.addEventListener('click', openColumnEditor);
+
     document.addEventListener('datachanged', ({ detail }) => {
         if (currentEditorEventId && currentEditorEventId == detail.eventId) {
             renderAdminEditor(currentEditorEventId, true);
@@ -637,7 +638,9 @@ function getTargetDates() {
     const dayOfWeek = today.getDay();
     const addDays   = (days) => { const d = new Date(today); d.setDate(d.getDate() + days); return d; };
     const fmt       = (d) => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
-    return dayOfWeek === 5 ? [fmt(addDays(1)), fmt(addDays(2)), fmt(addDays(3))] : [fmt(addDays(1))];
+    return dayOfWeek === 5
+        ? [fmt(addDays(1)), fmt(addDays(2)), fmt(addDays(3))]
+        : [fmt(addDays(1))];
 }
 
 export async function handleInstantiateTemplate() {
@@ -707,99 +710,93 @@ function getWeekDates(offsetWeeks = 0) {
     const now = new Date();
     const day = now.getDay();
     const diffToMon = day === 0 ? -6 : 1 - day;
-    const mon = new Date(now);
-    mon.setDate(now.getDate() + diffToMon + offsetWeeks * 7);
-    mon.setHours(0, 0, 0, 0);
-    return DAY_NAMES.map(({ key }, i) => {
-        const d = new Date(mon); d.setDate(mon.getDate() + i);
-        return { dayKey: key, date: d };
+    const monday = new Date(now);
+    monday.setDate(now.getDate() + diffToMon + offsetWeeks * 7);
+    return DAY_NAMES.map(({ key }) => {
+        const diff = key === 0 ? 6 : key - 1;
+        const date = new Date(monday);
+        date.setDate(monday.getDate() + diff);
+        return { dayKey: key, date };
     });
 }
 
-function fmtDate(d)  { return `${String(d.getDate()).padStart(2,'0')}.${String(d.getMonth()+1).padStart(2,'0')}`; }
-function fmtIso(d)   { return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`; }
-function isToday(d)  { const t = new Date(); return d.getFullYear()===t.getFullYear() && d.getMonth()===t.getMonth() && d.getDate()===t.getDate(); }
-function isPast(d)   { const t = new Date(); t.setHours(0,0,0,0); return d < t; }
-
-function buildTemplateOptions(selectedId) {
-    const src = document.getElementById('template-select-id');
-    if (!src) return '<option value="">— Шаблон —</option>';
-    let html = '<option value="">— Шаблон —</option>';
-    Array.from(src.options).forEach(opt => {
-        if (!opt.value) return;
-        const sel = String(opt.value) === String(selectedId) ? ' selected' : '';
-        html += `<option value="${opt.value}"${sel}>${esc(opt.text)}</option>`;
-    });
-    return html;
+function fmtDate(d) {
+    return `${String(d.getDate()).padStart(2,'0')}.${String(d.getMonth()+1).padStart(2,'0')}`;
 }
 
-function buildTemplateRow(dayKey, tplId, rowIndex, disabled) {
+function fmtIso(d) {
+    return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+}
+
+function buildTemplateRow(dayKey, selectedId, rowIdx, showRemove) {
+    const events    = getCachedEvents();
+    const templates = events.filter(e => e.is_template);
+    const opts = templates.map(t =>
+        `<option value="${t.id}" ${String(t.id) === String(selectedId) ? 'selected' : ''}>${esc(t.title)}</option>`
+    ).join('');
     return `
-        <div class="sched-tpl-row" data-day-key="${dayKey}" data-row="${rowIndex}">
-            <select class="sched-day__select" data-day-key="${dayKey}" ${disabled ? 'disabled' : ''}>
-                ${buildTemplateOptions(tplId)}
+        <div class="sched-tpl-row" style="display:flex;gap:4px;align-items:center;margin-bottom:3px;">
+            <select class="sched-day__select" style="flex:1;font-size:0.75rem;padding:3px 6px;">
+                <option value="">— шаблон —</option>
+                ${opts}
             </select>
-            ${!disabled ? `<button class="sched-tpl-remove btn-tiny-danger" data-day-key="${dayKey}" data-row="${rowIndex}" title="Убрать">✕</button>` : ''}
+            ${showRemove || rowIdx > 0
+                ? `<button class="sched-tpl-remove btn btn-danger btn-xs" data-day-key="${dayKey}" data-row="${rowIdx}" title="Убрать">✕</button>`
+                : ''}
         </div>`;
 }
 
 export function renderScheduleGrid() {
-    const grid  = document.getElementById('sched-grid');
-    const label = document.getElementById('sched-week-label');
-    if (!grid || !label) return;
+    const grid = document.getElementById('sched-grid');
+    if (!grid) return;
 
-    const schedule  = loadSchedule();
-    const dates     = getWeekDates(schedWeekOffset);
-    const allEvents = getCachedEvents();
+    const schedule = loadSchedule();
+    const dates    = getWeekDates(schedWeekOffset);
+    const events   = getCachedEvents();
+    const today    = new Date();
+    today.setHours(0,0,0,0);
 
-    const isCurrent = schedWeekOffset === 0;
-    const mon = dates[0].date, sun = dates[6].date;
-    label.textContent = `${fmtDate(mon)} – ${fmtDate(sun)}.${sun.getFullYear()}${isCurrent ? '  (текущая)' : ''}`;
+    const weekStart = dates[0].date;
+    const weekEnd   = dates[6].date;
+    const weekLabel = el('sched-week-label');
+    if (weekLabel) weekLabel.textContent = `${fmtDate(weekStart)} — ${fmtDate(weekEnd)}.${weekEnd.getFullYear()}`;
 
-    grid.innerHTML = dates.map(({ dayKey, date }, i) => {
-        const dayInfo = DAY_NAMES[i];
-        const past    = isPast(date);
-        const today   = isToday(date);
-        const weekend = dayKey === 0 || dayKey === 6;
-        const tplList = schedule[dayKey] ?? [];
+    grid.innerHTML = dates.map(({ dayKey, date }) => {
+        const dayInfo  = DAY_NAMES.find(d => d.key === dayKey);
+        const dt       = new Date(date); dt.setHours(0,0,0,0);
+        const today_   = new Date(today);
+        const isToday  = dt.getTime() === today_.getTime();
+        const past     = dt < today_;
+        const weekend  = dayKey === 0 || dayKey === 6;
 
-        const rows = tplList.length > 0
-            ? tplList.map((id, ri) => buildTemplateRow(dayKey, id, ri, past)).join('')
-            : buildTemplateRow(dayKey, '', 0, past);
+        const isoDate   = fmtIso(date);
+        const generated = events.filter(e => !e.is_template && e.date === isoDate);
 
-        const addBtn = !past
-            ? `<button class="sched-add-tpl btn btn-outlined btn-xs" data-day-key="${dayKey}" type="button">+ список</button>`
+        const generatedHtml = generated.length > 0
+            ? `<div class="sched-generated-list">${generated.map(e => `
+                <div class="sched-gen-item">
+                    <span class="sched-gen-title">${esc(e.title)}</span>
+                    <button class="sched-gen-del-btn btn btn-danger btn-xs" data-event-id="${e.id}" title="Удалить список">✕</button>
+                </div>`).join('')}</div>`
             : '';
 
-        const count = tplList.filter(Boolean).length;
-        const countBadge = count > 0
-            ? `<span class="sched-count-badge">${count} ${count===1?'список':count<5?'списка':'списков'}</span>`
+        const countBadge = generated.length > 0
+            ? `<span class="sched-count-badge">${generated.length}</span>`
             : '';
 
-        const isoDate = fmtIso(date);
-        const generated = allEvents.filter(e => !e.is_template && e.date === isoDate);
-        const generatedHtml = generated.length > 0 ? `
-            <div class="sched-generated-section">
-                <span class="sched-generated-label">
-                    <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
-                    Создано (${generated.length}):
-                </span>
-                ${generated.map(e => `
-                    <div class="sched-generated-item" title="${esc(e.title)}" style="display:flex; justify-content:space-between; align-items:center;">
-                        <div style="display:flex; align-items:center; gap:6px; overflow:hidden;">
-                            <span class="sched-gen-status sched-gen-status--${e.status==='active'?'active':'draft'}"></span>
-                            <span class="sched-gen-title" style="white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${esc(e.title)}</span>
-                        </div>
-                        <button class="sched-gen-del-btn btn-tiny-danger" data-event-id="${e.id}" title="Удалить этот список навсегда" style="width:18px; height:18px; font-size:0.6rem; margin-left:4px; flex-shrink:0;">✕</button>
-                    </div>`).join('')}
-            </div>` : '';
+        const assigned = schedule[dayKey] ?? [];
+        const rows = assigned.length > 0
+            ? assigned.map((id, i) => buildTemplateRow(dayKey, id, i, assigned.length > 1)).join('')
+            : buildTemplateRow(dayKey, '', 0, false);
+
+        const addBtn = `<button class="sched-add-tpl btn btn-outlined btn-xs" data-day-key="${dayKey}" style="margin-top:4px;width:100%;font-size:0.7rem;">+ шаблон</button>`;
 
         return `
-            <div class="sched-day${today?' sched-day--today':''}${past?' sched-day--past':''}${weekend?' sched-day--weekend':''}">
+            <div class="sched-day${isToday?' sched-day--today':''}${past?' sched-day--past':''}${weekend?' sched-day--weekend':''}">
                 <div class="sched-day__head">
                     <span class="sched-day__short">${dayInfo.short}</span>
                     <span class="sched-day__date">${fmtDate(date)}</span>
-                    ${today ? '<span class="sched-day__badge">сегодня</span>' : ''}
+                    ${isToday ? '<span class="sched-day__badge">сегодня</span>' : ''}
                     ${countBadge}
                 </div>
                 ${generatedHtml}
@@ -819,25 +816,19 @@ function _bindSchedGridEvents(grid) {
     g.addEventListener('click', async (e) => {
         const addBtn    = e.target.closest('.sched-add-tpl');
         const removeBtn = e.target.closest('.sched-tpl-remove');
-        const delGenBtn = e.target.closest('.sched-gen-del-btn'); // Кнопка удаления готового списка
+        const delGenBtn = e.target.closest('.sched-gen-del-btn');
 
-        // 1. Удаление сгенерированного списка прямо из расписания
         if (delGenBtn) {
             const eventId = delGenBtn.dataset.eventId;
             if (!confirm('Вы уверены, что хотите удалить этот список?\n\nВсе данные, уже заполненные управлениями на этот день, будут безвозвратно удалены!')) return;
-
             try {
                 await api.delete(`/admin/events/${eventId}`);
                 window.showSnackbar?.('Список успешно удалён', 'success');
-
-                // Если этот список прямо сейчас открыт в главном редакторе — очищаем редактор
                 if (currentEditorEventId == eventId) {
                     currentEditorEventId = null;
                     document.getElementById('editor-container')?.classList.add('hidden');
                     document.getElementById('editor-empty')?.classList.remove('hidden');
                 }
-
-                // Перезагружаем выпадающие меню и перерисовываем сетку
                 await loadEventsDropdowns();
                 renderScheduleGrid();
             } catch (err) {
@@ -847,7 +838,6 @@ function _bindSchedGridEvents(grid) {
             return;
         }
 
-        // 2. Добавление пустой строки шаблона
         if (addBtn) {
             const dayKey = addBtn.dataset.dayKey;
             const list   = document.getElementById(`tpl-list-${dayKey}`);
@@ -857,7 +847,6 @@ function _bindSchedGridEvents(grid) {
             list.appendChild(newRow.firstElementChild);
         }
 
-        // 3. Удаление строки шаблона
         if (removeBtn) {
             const dayKey = removeBtn.dataset.dayKey;
             const rowIdx = parseInt(removeBtn.dataset.row);
@@ -881,9 +870,9 @@ function readScheduleFromGrid() {
 }
 
 export function initSchedule() {
-    document.getElementById('sched-prev-week')?.addEventListener('click',  () => { schedWeekOffset--; renderScheduleGrid(); });
-    document.getElementById('sched-next-week')?.addEventListener('click',  () => { schedWeekOffset++; renderScheduleGrid(); });
-    document.getElementById('sched-today-week')?.addEventListener('click', () => { schedWeekOffset = 0; renderScheduleGrid(); });
+    document.getElementById('sched-prev-week') ?.addEventListener('click',  () => { schedWeekOffset--; renderScheduleGrid(); });
+    document.getElementById('sched-next-week') ?.addEventListener('click',  () => { schedWeekOffset++; renderScheduleGrid(); });
+    document.getElementById('sched-today-week')?.addEventListener('click',  () => { schedWeekOffset = 0; renderScheduleGrid(); });
 
     document.getElementById('sched-save-btn')?.addEventListener('click', () => {
         saveScheduleToStorage(readScheduleFromGrid());
@@ -932,8 +921,10 @@ export function initSchedule() {
             }
         }
 
-        if (successCount > 0)                         window.showSnackbar?.(`Создано ${successCount} ${successCount===1?'список':successCount<5?'списка':'списков'}`, 'success');
-        else if (skipCount > 0 && successCount === 0)  window.showSnackbar?.('Все выбранные списки уже созданы на эти даты', 'error');
+        if (successCount > 0)
+            window.showSnackbar?.(`Создано ${successCount} ${successCount===1?'список':successCount<5?'списка':'списков'}`, 'success');
+        else if (skipCount > 0 && successCount === 0)
+            window.showSnackbar?.('Все выбранные списки уже созданы на эти даты', 'error');
 
         await loadEventsDropdowns();
         renderScheduleGrid();
