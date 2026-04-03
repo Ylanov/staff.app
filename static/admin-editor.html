@@ -1,0 +1,167 @@
+<!-- views/admin-editor.html -->
+<div id="tab-editor">
+    <div class="admin-layout">
+
+        <!-- ── Sidebar ── -->
+        <aside class="sidebar">
+            <div class="sidebar__header">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/>
+                    <rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/>
+                </svg>
+                <span class="sidebar__header-title">Инструменты</span>
+            </div>
+
+            <!-- 1. Новый список -->
+            <div class="sidebar__section">
+                <div class="sidebar__section-label">
+                    <span class="step-badge">1</span>
+                    Создать список
+                </div>
+                <div class="sidebar__stack">
+                    <div class="field">
+                        <label class="field-label" for="event-title">Название</label>
+                        <input type="text" id="event-title" placeholder="Например: АМГ 1 эшелон">
+                    </div>
+                    <button id="create-event-btn" class="btn btn-success btn-sm">
+                        Создать список
+                    </button>
+                </div>
+            </div>
+
+            <!-- 2. Добавить группу -->
+            <div class="sidebar__section">
+                <div class="sidebar__section-label">
+                    <span class="step-badge">2</span>
+                    Добавить группу
+                </div>
+                <div class="sidebar__stack">
+                    <div class="select-field">
+                        <label class="field-label" for="group-event-id">Список</label>
+                        <select id="group-event-id"></select>
+                    </div>
+                    <div class="field">
+                        <label class="field-label" for="group-name">Название группы</label>
+                        <input type="text" id="group-name" placeholder="Например: Группа управления">
+                    </div>
+                    <button id="add-group-btn" class="btn btn-outlined btn-sm">
+                        Добавить группу
+                    </button>
+                </div>
+            </div>
+
+            <!-- 3. Должности -->
+            <div class="sidebar__section">
+                <div class="sidebar__section-label">
+                    <span class="step-badge">3</span>
+                    Должности
+                </div>
+                <div class="sidebar__stack">
+                    <div class="select-field">
+                        <label class="field-label" for="position-event-id">Список</label>
+                        <select id="position-event-id"></select>
+                    </div>
+                    <div id="positions-list" class="positions-list">
+                        <p class="hint">Выберите список</p>
+                    </div>
+                    <div class="field">
+                        <label class="field-label" for="new-position-name">Новая должность</label>
+                        <input type="text" id="new-position-name" placeholder="Введите название">
+                    </div>
+                    <button id="add-position-btn" class="btn btn-success btn-sm">
+                        + Добавить должность
+                    </button>
+                </div>
+            </div>
+
+            <!-- 4. Выгрузка -->
+            <div class="sidebar__section">
+                <div class="sidebar__section-label">
+                    <span class="step-badge">4</span>
+                    Выгрузка в Word
+                </div>
+                <div class="sidebar__stack">
+                    <div class="select-field">
+                        <label class="field-label" for="export-event-id">Список</label>
+                        <select id="export-event-id"></select>
+                    </div>
+                    <button id="export-btn" class="btn btn-secondary btn-sm">
+                        ⬇ Скачать .docx
+                    </button>
+                </div>
+            </div>
+        </aside>
+
+        <!-- ── Editor Panel ── -->
+        <div class="editor-panel">
+            <div class="editor-toolbar">
+                <div class="editor-toolbar__left">
+                    <span class="card-title">Главная таблица</span>
+                    <span class="card-subtitle">Выберите список и нажмите «Загрузить»</span>
+                </div>
+                <div class="editor-toolbar__right">
+                    <div class="select-field" style="min-width:240px;">
+                        <label class="field-label" for="editor-event-id">Список</label>
+                        <select id="editor-event-id"></select>
+                    </div>
+                    <button id="load-editor-btn" class="btn btn-filled btn-sm" style="margin-top:18px; flex-shrink:0;">
+                        Загрузить
+                    </button>
+                </div>
+            </div>
+
+            <div id="editor-container" class="hidden">
+                <div class="editor-body">
+                    <!-- Заголовок с кнопками управления списком (Активация, Шаблон, Удаление) -->
+                    <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 14px; flex-wrap: wrap; gap: 8px;">
+                        <h3 id="editor-title" class="editor-title" style="margin: 0;"></h3>
+
+                        <div style="display: flex; gap: 8px; align-items: center;">
+                            <div id="editor-template-toggle-wrap" class="hidden">
+                                <label style="display: flex; align-items: center; gap: 8px; cursor: pointer; background: var(--md-surface-variant); padding: 4px 12px; border-radius: var(--md-radius-full); border: 1px solid var(--md-outline);">
+                                    <input type="checkbox" id="editor-is-template-cb" style="width: 15px; height: 15px; cursor: pointer;">
+                                    <span style="font-size: 0.82rem; font-weight: 500; color: var(--md-primary-dark);">Это шаблон</span>
+                                </label>
+                            </div>
+                            <button id="editor-toggle-status-btn" class="btn btn-sm hidden" type="button"></button>
+
+                            <button id="editor-delete-event-btn" class="btn btn-sm" style="background: var(--md-error); color: white; border: none;" type="button" title="Удалить этот список">
+                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right: 4px;"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>
+                                Удалить
+                            </button>
+                        </div>
+                    </div>
+
+                    <div class="data-table-wrap">
+                        <table id="master-table">
+                            <thead>
+                                <tr>
+                                    <th style="width:30px;">№</th>
+                                    <th style="min-width:160px;">ФИО</th>
+                                    <th style="min-width:100px;">Звание</th>
+                                    <th style="min-width:100px;">№ Док-та</th>
+                                    <th style="min-width:140px;">Должность</th>
+                                    <th style="min-width:90px;">Позывной</th>
+                                    <th style="min-width:130px;">Квота</th>
+                                    <th>Примечание</th>
+                                    <th style="width:40px;"></th>
+                                </tr>
+                            </thead>
+                            <tbody id="master-tbody"></tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Empty state when no list loaded -->
+            <div id="editor-empty" style="padding:48px 24px; text-align:center;">
+                <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="var(--md-on-surface-hint)" stroke-width="1.5" style="margin-bottom:12px;">
+                    <rect x="3" y="3" width="18" height="18" rx="2"/>
+                    <path d="M3 9h18M9 21V9"/>
+                </svg>
+                <p style="font-size:.875rem; color:var(--md-on-surface-hint);">Выберите список для загрузки редактора</p>
+            </div>
+        </div>
+
+    </div>
+</div>
