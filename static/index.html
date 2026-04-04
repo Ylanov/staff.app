@@ -13,7 +13,7 @@
 <body>
 
 <!-- ═══════════════════════════════════════════════
-     TOP APP BAR — скрыт на экране логина
+     TOP APP BAR
      ═══════════════════════════════════════════════ -->
 <header id="navbar" class="top-app-bar hidden">
     <div class="top-app-bar__inner">
@@ -27,8 +27,12 @@
         </a>
 
         <div class="top-app-bar__actions">
-            <button id="admin-mode-btn" class="btn btn-outlined btn-sm hidden" style="margin-right: 8px;">
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right: 4px;"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+            <button id="admin-mode-btn" class="btn btn-outlined btn-sm hidden" style="margin-right:8px;" type="button">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                     stroke-linecap="round" stroke-linejoin="round" style="margin-right:4px;">
+                    <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/>
+                    <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>
+                </svg>
                 <span>Режим заполнения</span>
             </button>
 
@@ -36,9 +40,7 @@
                 <div class="user-avatar" id="user-avatar">А</div>
                 <span class="user-name" id="user-display"></span>
             </div>
-            <button id="logout-btn" class="btn btn-text btn-sm" type="button">
-                Выйти
-            </button>
+            <button id="logout-btn" class="btn btn-text btn-sm" type="button">Выйти</button>
         </div>
     </div>
 </header>
@@ -48,19 +50,15 @@
      ═══════════════════════════════════════════════ -->
 <main id="app-root">
 
-    <!-- ─── Login View ─── -->
+    <!-- ─── Login View ─────────────────────────────────────────────────────── -->
     <div id="login-view" style="
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        min-height: 100vh;
-        background: var(--md-background);
-        padding: 24px;
-    ">
+        display:flex; align-items:center; justify-content:center;
+        min-height:100vh; background:var(--md-background); padding:24px;">
         <div class="login-card">
             <div class="login-card__header">
                 <div class="login-logo">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2"
+                         stroke-linecap="round" stroke-linejoin="round">
                         <polygon points="12 2 22 8.5 22 15.5 12 22 2 15.5 2 8.5 12 2"/>
                         <line x1="12" y1="22" x2="12" y2="15.5"/>
                         <polyline points="22 8.5 12 15.5 2 8.5"/>
@@ -71,23 +69,19 @@
             </div>
             <div class="login-card__body">
                 <form id="login-form" novalidate>
-                    <div class="field" style="margin-bottom: 12px;">
+                    <div class="field" style="margin-bottom:12px;">
                         <label class="field-label" for="username">Логин</label>
-                        <input type="text" id="username"
-                               placeholder="Например: upr_1"
-                               required
-                               autocomplete="username">
+                        <input type="text" id="username" placeholder="Например: upr_1"
+                               required autocomplete="username">
                     </div>
-                    <div class="field" style="margin-bottom: 12px;">
+                    <div class="field" style="margin-bottom:12px;">
                         <label class="field-label" for="password">Пароль</label>
-                        <input type="password" id="password"
-                               placeholder="Введите пароль"
-                               required
-                               autocomplete="current-password">
+                        <input type="password" id="password" placeholder="Введите пароль"
+                               required autocomplete="current-password">
                     </div>
                     <div id="login-error" class="login-error" role="alert" aria-live="polite"></div>
                     <button type="submit" class="btn btn-filled"
-                            style="width: 100%; margin-top: 8px; height: 44px; font-size: .95rem;">
+                            style="width:100%; margin-top:8px; height:44px; font-size:.95rem;">
                         Войти
                     </button>
                 </form>
@@ -95,15 +89,18 @@
         </div>
     </div>
 
-    <!-- ─── Department View ─── -->
+    <!-- ─── Department View ────────────────────────────────────────────────── -->
     <div id="department-view" class="hidden">
-        <div class="page dept-page">
-
-            <div class="dept-header">
+        <div class="page">
+            <div class="dept-header" style="display: flex; justify-content: space-between; align-items: flex-end;">
                 <div>
                     <h2 class="page-title">Мои задачи</h2>
                     <p class="dept-header__sub">Выберите список для заполнения</p>
                 </div>
+                <button id="cc-dept-tab-btn" class="btn btn-outlined btn-sm" type="button" style="margin-bottom: 8px;">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right: 4px;"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line><polyline points="10 9 9 9 8 9"></polyline></svg>
+                    Боевой расчёт
+                </button>
             </div>
 
             <!-- Сетка карточек -->
@@ -114,12 +111,15 @@
             <!-- Скрытая кнопка — совместимость с app.js -->
             <button id="load-slots-btn" class="hidden" type="button"></button>
 
-            <!-- Зона таблицы -->
+            <!-- Зона таблицы (Обычные списки) -->
             <div id="dept-content" class="dept-content hidden">
                 <div class="dept-content__header">
                     <div class="dept-content__back">
                         <button id="dept-back-btn" class="btn btn-text btn-sm" type="button">
-                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M19 12H5M12 5l-7 7 7 7"/></svg>
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                 stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                                <path d="M19 12H5M12 5l-7 7 7 7"/>
+                            </svg>
                             К спискам
                         </button>
                         <span class="dept-content__title" id="dept-active-title"></span>
@@ -145,20 +145,72 @@
                 </div>
             </div>
 
+            <!-- Зона Боевого расчёта (Для управлений) -->
+            <div id="dept-combat-calc" class="hidden" style="margin-top: 24px;">
+
+                <!-- Раскрывающийся Тулбар (как в редакторе) -->
+                <div class="tools-bar">
+                    <div class="tools-bar__buttons">
+                        <button class="tool-trigger active" data-panel="cc-panel-calendar-dept" type="button">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                <rect x="3" y="4" width="18" height="18" rx="2" ry="2"/>
+                                <line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/>
+                            </svg>
+                            Календарь расчётов
+                            <svg class="tool-trigger__chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                                <path d="M6 9l6 6 6-6"/>
+                            </svg>
+                        </button>
+                    </div>
+
+                    <!-- Сама панель календаря -->
+                    <div class="tools-panel open" id="cc-panel-calendar-dept">
+                        <div class="tools-panel__inner" style="padding-bottom:16px;">
+                            <!-- Навигация по неделям -->
+                            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:16px;">
+                                <button id="cc-prev-week-dept" class="btn btn-outlined btn-xs" type="button">← Пред.</button>
+                                <div style="display:flex; flex-direction:column; align-items:center; min-width:130px;">
+                                    <span id="cc-week-label-dept" style="font-size:0.85rem; font-weight:600; text-align:center;"></span>
+                                    <span id="cc-today-week-dept" style="font-size:0.7rem; color:var(--md-primary); cursor:pointer; margin-top:2px;">Текущая неделя</span>
+                                </div>
+                                <button id="cc-next-week-dept" class="btn btn-outlined btn-xs" type="button">След. →</button>
+                            </div>
+
+                            <!-- Горизонтальная сетка на 7 дней -->
+                            <div id="cc-instances-list-dept" style="display: grid; grid-template-columns: repeat(7, minmax(140px, 1fr)); gap: 8px; overflow-x: auto; padding-bottom: 4px;">
+                                <p class="hint" style="grid-column: 1 / -1; text-align: center;">Загрузка...</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Зона Редактора (внизу) -->
+                <div class="editor-panel" style="margin-top: 16px;">
+                    <div id="cc-view-empty-dept" style="padding:48px 24px; text-align:center; color:var(--md-on-surface-hint);">
+                        <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" style="margin-bottom:12px;">
+                            <rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/>
+                        </svg>
+                        <p style="font-size:.875rem;">Выберите расчёт на любой день из календаря сверху</p>
+                    </div>
+                    <div id="cc-view-panel-dept" class="hidden" style="padding: 24px;"></div>
+                </div>
+
+            </div>
+
         </div>
     </div>
 
-    <!-- ─── Admin View ─── -->
+    <!-- ─── Admin View ──────────────────────────────────────────────────────── -->
     <div id="admin-view" class="hidden">
         <div class="page">
             <div class="page-header" style="display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:12px;">
                 <h2 class="page-title">Управление</h2>
             </div>
 
-            <!-- Tab Bar -->
+            <!-- ── Tab Bar ─────────────────────────────────────────────────── -->
             <nav class="tab-bar" role="tablist">
                 <button class="tab-btn active"
-                        role="tab" aria-selected="true"  aria-controls="tab-editor" type="button">
+                        role="tab" aria-selected="true" aria-controls="tab-editor" type="button">
                     Редактор списков
                 </button>
                 <button class="tab-btn"
@@ -169,52 +221,107 @@
                         role="tab" aria-selected="false" aria-controls="tab-persons" type="button">
                     База людей
                 </button>
+                <button class="tab-btn"
+                        role="tab" aria-selected="false" aria-controls="tab-duty" type="button">
+                    Графики наряда
+                </button>
+                <button class="tab-btn"
+                        role="tab" aria-selected="false" aria-controls="tab-combat" type="button">
+                    Боевой расчёт
+                </button>
             </nav>
 
-            <!-- ── Tab: Editor ── -->
+            <!-- ══════════════════════════════════════════════════════════════
+                 Tab: Редактор списков
+                 ══════════════════════════════════════════════════════════════ -->
             <div id="tab-editor" role="tabpanel">
 
-                <!-- ── Toolbar ── -->
+                <!-- Toolbar с раскрывающимися панелями -->
                 <div class="tools-bar">
                     <div class="tools-bar__buttons">
 
+                        <!-- Новый список -->
                         <button class="tool-trigger" data-panel="panel-new-list" type="button">
-                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg>
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                 stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                <path d="M12 5v14M5 12h14"/>
+                            </svg>
                             Новый список
-                            <svg class="tool-trigger__chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg>
+                            <svg class="tool-trigger__chevron" width="12" height="12" viewBox="0 0 24 24" fill="none"
+                                 stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                                <path d="M6 9l6 6 6-6"/>
+                            </svg>
                         </button>
 
+                        <!-- Группа -->
                         <button class="tool-trigger" data-panel="panel-group" type="button">
-                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                 stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/>
+                                <circle cx="9" cy="7" r="4"/>
+                                <path d="M23 21v-2a4 4 0 0 0-3-3.87"/>
+                                <path d="M16 3.13a4 4 0 0 1 0 7.75"/>
+                            </svg>
                             Группа
-                            <svg class="tool-trigger__chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg>
+                            <svg class="tool-trigger__chevron" width="12" height="12" viewBox="0 0 24 24" fill="none"
+                                 stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                                <path d="M6 9l6 6 6-6"/>
+                            </svg>
                         </button>
 
+                        <!-- Должности -->
                         <button class="tool-trigger" data-panel="panel-positions" type="button">
-                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 7H4a2 2 0 0 0-2 2v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2z"/><path d="M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16"/></svg>
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                 stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                <path d="M20 7H4a2 2 0 0 0-2 2v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2z"/>
+                                <path d="M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16"/>
+                            </svg>
                             Должности
-                            <svg class="tool-trigger__chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg>
+                            <svg class="tool-trigger__chevron" width="12" height="12" viewBox="0 0 24 24" fill="none"
+                                 stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                                <path d="M6 9l6 6 6-6"/>
+                            </svg>
                         </button>
 
                         <div class="tools-bar__sep"></div>
 
+                        <!-- Расписание -->
                         <button class="tool-trigger" data-panel="panel-schedule" type="button">
-                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/><path d="M8 14h.01M12 14h.01M16 14h.01M8 18h.01M12 18h.01"/></svg>
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                 stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                <rect x="3" y="4" width="18" height="18" rx="2"/>
+                                <path d="M16 2v4M8 2v4M3 10h18"/>
+                                <path d="M8 14h.01M12 14h.01M16 14h.01M8 18h.01M12 18h.01"/>
+                            </svg>
                             Расписание
-                            <svg class="tool-trigger__chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg>
+                            <svg class="tool-trigger__chevron" width="12" height="12" viewBox="0 0 24 24" fill="none"
+                                 stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                                <path d="M6 9l6 6 6-6"/>
+                            </svg>
                         </button>
 
                         <div class="tools-bar__sep"></div>
 
+                        <!-- Выгрузка .docx -->
                         <button class="tool-trigger tool-trigger--export" data-panel="panel-export" type="button">
-                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                 stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                                <polyline points="7 10 12 15 17 10"/>
+                                <line x1="12" y1="15" x2="12" y2="3"/>
+                            </svg>
                             Выгрузка .docx
-                            <svg class="tool-trigger__chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg>
+                            <svg class="tool-trigger__chevron" width="12" height="12" viewBox="0 0 24 24" fill="none"
+                                 stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                                <path d="M6 9l6 6 6-6"/>
+                            </svg>
                         </button>
 
                     </div>
 
-                    <!-- Раскрывающиеся панели -->
+                    <!-- ── Раскрывающиеся панели ─────────────────────────── -->
+
+                    <!-- Панель: Новый список -->
                     <div class="tools-panel" id="panel-new-list">
                         <div class="tools-panel__inner">
                             <div class="tools-panel__row">
@@ -233,6 +340,7 @@
                         </div>
                     </div>
 
+                    <!-- Панель: Группа -->
                     <div class="tools-panel" id="panel-group">
                         <div class="tools-panel__inner">
                             <div class="tools-panel__row">
@@ -251,7 +359,7 @@
                         </div>
                     </div>
 
-                    <!-- ── Должности — теперь глобальные, без выбора списка ── -->
+                    <!-- Панель: Должности -->
                     <div class="tools-panel" id="panel-positions">
                         <div class="tools-panel__inner">
                             <div class="tools-panel__row tools-panel__row--positions">
@@ -261,7 +369,6 @@
                                         <label class="field-label" for="new-position-name">Новая должность</label>
                                         <input type="text" id="new-position-name" placeholder="Введите название">
                                     </div>
-
                                     <button id="add-position-btn" class="btn btn-success btn-sm" type="button">
                                         + Добавить
                                     </button>
@@ -275,10 +382,12 @@
                         </div>
                     </div>
 
+                    <!-- Панель: Расписание -->
                     <div class="tools-panel" id="panel-schedule">
                         <div class="tools-panel__inner" style="padding-bottom:0;">
 
-                            <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px; margin-bottom:12px;">
+                            <div style="display:flex; justify-content:space-between; align-items:center;
+                                        flex-wrap:wrap; gap:10px; margin-bottom:12px;">
                                 <div style="display:flex; gap:6px; align-items:center;">
                                     <button id="sched-prev-week"  class="btn btn-outlined btn-xs" type="button">← Пред.</button>
                                     <span   id="sched-week-label" style="font-size:0.82rem; font-weight:600; min-width:140px; text-align:center;"></span>
@@ -301,6 +410,7 @@
                         </div>
                     </div>
 
+                    <!-- Панель: Выгрузка .docx -->
                     <div class="tools-panel" id="panel-export">
                         <div class="tools-panel__inner">
                             <div class="tools-panel__row" style="align-items:flex-end; flex-wrap:wrap; gap:14px;">
@@ -339,7 +449,7 @@
                     </div>
                 </div>
 
-                <!-- ── Editor Panel (full width) ── -->
+                <!-- ── Editor Panel ─────────────────────────────────────────── -->
                 <div class="editor-panel">
                     <div class="editor-toolbar">
                         <div class="editor-toolbar__left">
@@ -351,8 +461,7 @@
                                 <label class="field-label" for="editor-event-id">Список</label>
                                 <select id="editor-event-id"></select>
                             </div>
-                            <button id="load-editor-btn"
-                                    class="btn btn-filled btn-sm" type="button"
+                            <button id="load-editor-btn" class="btn btn-filled btn-sm" type="button"
                                     style="margin-top:18px; flex-shrink:0;">
                                 Загрузить
                             </button>
@@ -361,13 +470,17 @@
 
                     <!-- Контейнер редактора (скрыт до загрузки) -->
                     <div id="editor-container" class="hidden">
-                        <div class="editor-header" style="display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:10px; padding:14px 18px; border-bottom:1px solid var(--md-outline-variant);">
+                        <div class="editor-header" style="display:flex; align-items:center;
+                             justify-content:space-between; flex-wrap:wrap; gap:10px;
+                             padding:14px 18px; border-bottom:1px solid var(--md-outline-variant);">
                             <div style="display:flex; align-items:center; gap:12px; flex-wrap:wrap;">
                                 <strong id="editor-title" style="font-size:0.95rem;"></strong>
 
-                                <div id="editor-template-toggle-wrap" class="hidden" style="display:flex; align-items:center; gap:6px;">
+                                <div id="editor-template-toggle-wrap" class="hidden"
+                                     style="display:flex; align-items:center; gap:6px;">
                                     <label style="display:flex; align-items:center; gap:5px; cursor:pointer; user-select:none;">
-                                        <input type="checkbox" id="editor-is-template-cb" style="accent-color:var(--md-primary);">
+                                        <input type="checkbox" id="editor-is-template-cb"
+                                               style="accent-color:var(--md-primary);">
                                         <span style="font-size:0.78rem; font-weight:500; color:var(--md-primary-dark);">Шаблон</span>
                                     </label>
                                 </div>
@@ -388,9 +501,10 @@
                         </div>
                     </div>
 
-                    <!-- Empty state when no list loaded -->
+                    <!-- Empty state -->
                     <div id="editor-empty" style="padding:48px 24px; text-align:center;">
-                        <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="var(--md-on-surface-hint)" stroke-width="1.5" style="margin-bottom:12px;">
+                        <svg width="48" height="48" viewBox="0 0 24 24" fill="none"
+                             stroke="var(--md-on-surface-hint)" stroke-width="1.5" style="margin-bottom:12px;">
                             <rect x="3" y="3" width="18" height="18" rx="2"/>
                             <path d="M3 9h18M9 21V9"/>
                         </svg>
@@ -400,7 +514,9 @@
 
             </div><!-- /#tab-editor -->
 
-            <!-- ── Tab: Users ── -->
+            <!-- ══════════════════════════════════════════════════════════════
+                 Tab: Пользователи
+                 ══════════════════════════════════════════════════════════════ -->
             <div id="tab-users" class="hidden" role="tabpanel">
                 <div class="users-panel">
                     <div class="users-panel__create">
@@ -408,13 +524,11 @@
                         <div class="create-user-row">
                             <div class="field">
                                 <label class="field-label" for="new-username">Логин</label>
-                                <input type="text" id="new-username"
-                                       placeholder="upr_1" autocomplete="off">
+                                <input type="text" id="new-username" placeholder="upr_1" autocomplete="off">
                             </div>
                             <div class="field">
                                 <label class="field-label" for="new-password">Пароль</label>
-                                <input type="text" id="new-password"
-                                       placeholder="Минимум 6 символов"
+                                <input type="text" id="new-password" placeholder="Минимум 6 символов"
                                        autocomplete="new-password">
                             </div>
                             <div class="field field--role">
@@ -424,10 +538,8 @@
                                     <option value="admin">Администратор</option>
                                 </select>
                             </div>
-                            <button id="create-user-btn"
-                                    class="btn btn-success btn-sm"
-                                    style="margin-top:18px; flex-shrink:0;"
-                                    type="button">
+                            <button id="create-user-btn" class="btn btn-success btn-sm"
+                                    style="margin-top:18px; flex-shrink:0;" type="button">
                                 Добавить
                             </button>
                         </div>
@@ -446,16 +558,25 @@
                         </table>
                     </div>
                 </div>
-            </div>
+            </div><!-- /#tab-users -->
 
-            <!-- ── Tab: Persons ── -->
+            <!-- ══════════════════════════════════════════════════════════════
+                 Tab: База людей
+                 ══════════════════════════════════════════════════════════════ -->
             <div id="tab-persons" class="hidden" role="tabpanel">
                 <div class="persons-panel">
 
                     <!-- Тулбар: поиск + кнопки -->
-                    <div style="display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:12px; padding:16px 20px; border-bottom:1px solid var(--md-outline-variant);">
+                    <div style="display:flex; align-items:center; justify-content:space-between;
+                                flex-wrap:wrap; gap:12px; padding:16px 20px;
+                                border-bottom:1px solid var(--md-outline-variant);">
                         <div style="display:flex; align-items:center; gap:8px; flex:1; max-width:400px;">
-                            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0;color:var(--md-on-surface-hint);"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg>
+                            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                 stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+                                 style="flex-shrink:0;color:var(--md-on-surface-hint);">
+                                <circle cx="11" cy="11" r="8"/>
+                                <path d="M21 21l-4.35-4.35"/>
+                            </svg>
                             <input type="text" id="persons-search" placeholder="Поиск по ФИО…" autocomplete="off"
                                    style="flex:1;border:none;background:transparent;font-size:0.88rem;outline:none;color:var(--md-on-surface);">
                         </div>
@@ -468,7 +589,9 @@
 
                     <!-- Форма добавления (скрыта) -->
                     <div id="persons-add-form" class="hidden"
-                         style="display:flex; flex-wrap:wrap; gap:12px; align-items:flex-end; padding:14px 20px; background:var(--md-surface-variant); border-bottom:1px solid var(--md-outline-variant);">
+                         style="display:flex; flex-wrap:wrap; gap:12px; align-items:flex-end;
+                                padding:14px 20px; background:var(--md-surface-variant);
+                                border-bottom:1px solid var(--md-outline-variant);">
                         <div class="field" style="flex:2; min-width:180px;">
                             <label class="field-label" for="person-fullname">ФИО</label>
                             <input type="text" id="person-fullname" placeholder="Иванов Иван Иванович" autocomplete="off">
@@ -481,7 +604,7 @@
                             <label class="field-label" for="person-doc">№ Документа</label>
                             <input type="text" id="person-doc" placeholder="АБ123456">
                         </div>
-                        <!-- select управления — показывается только у администратора через JS -->
+                        <!-- Управление — показывается только администратору через JS -->
                         <div class="field admin-only-field hidden" style="flex:1; min-width:160px;">
                             <label class="field-label" for="person-dept">Управление</label>
                             <select id="person-dept">
@@ -512,8 +635,10 @@
                     </div>
 
                     <div id="persons-empty" class="persons-empty hidden">
-                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">
-                            <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/>
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4"
+                             stroke-linecap="round" stroke-linejoin="round">
+                            <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/>
+                            <circle cx="9" cy="7" r="4"/>
                             <path d="M23 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/>
                         </svg>
                         <p>База пока пуста</p>
@@ -521,7 +646,175 @@
                     </div>
 
                 </div>
-            </div>
+            </div><!-- /#tab-persons -->
+
+            <!-- ══════════════════════════════════════════════════════════════
+                 Tab: Графики наряда
+                 ══════════════════════════════════════════════════════════════ -->
+            <div id="tab-duty" class="hidden" role="tabpanel">
+                <div class="duty-layout">
+
+                    <!-- ── Левая панель: список графиков ─────────────────── -->
+                    <aside class="duty-sidebar">
+                        <div class="duty-sidebar__header">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none"
+                                 stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                <rect x="3" y="4" width="18" height="18" rx="2" ry="2"/>
+                                <line x1="16" y1="2" x2="16" y2="6"/>
+                                <line x1="8"  y1="2" x2="8"  y2="6"/>
+                                <line x1="3"  y1="10" x2="21" y2="10"/>
+                            </svg>
+                            <span class="duty-sidebar__title">Графики наряда</span>
+                        </div>
+
+                        <div class="duty-sidebar__body">
+
+                            <!-- Форма создания (скрыта по умолчанию) -->
+                            <div id="duty-create-form" class="duty-create-form hidden">
+                                <div class="field">
+                                    <label class="field-label" for="duty-create-position">Должность</label>
+                                    <select id="duty-create-position" style="width:100%;"></select>
+                                </div>
+                                <div class="field" style="margin-top:8px;">
+                                    <label class="field-label" for="duty-create-title">Название графика</label>
+                                    <input type="text" id="duty-create-title"
+                                           placeholder="График операторов АМГ" autocomplete="off">
+                                </div>
+                                <div style="display:flex; gap:6px; margin-top:10px;">
+                                    <button id="duty-create-save"   class="btn btn-success btn-sm" style="flex:1;" type="button">Создать</button>
+                                    <button id="duty-create-cancel" class="btn btn-outlined btn-sm" type="button">Отмена</button>
+                                </div>
+                            </div>
+
+                            <!-- Кнопка «+ Создать график» -->
+                            <button id="duty-add-schedule-btn" class="btn btn-success btn-sm"
+                                    style="width:100%; margin-bottom:10px;" type="button">
+                                + Создать график
+                            </button>
+
+                            <!-- Список существующих графиков -->
+                            <div id="duty-schedules-list">
+                                <p class="hint">Нет графиков — создайте первый</p>
+                            </div>
+
+                        </div>
+                    </aside>
+
+                    <!-- ── Правая панель: сетка наряда ──────────────────── -->
+                    <div class="duty-grid-panel">
+
+                        <!-- Пустое состояние -->
+                        <div id="duty-grid-empty" class="duty-grid-empty">
+                            <svg width="48" height="48" viewBox="0 0 24 24" fill="none"
+                                 stroke="var(--md-on-surface-hint)" stroke-width="1.5">
+                                <rect x="3" y="4" width="18" height="18" rx="2" ry="2"/>
+                                <line x1="16" y1="2" x2="16" y2="6"/>
+                                <line x1="8"  y1="2" x2="8"  y2="6"/>
+                                <line x1="3"  y1="10" x2="21" y2="10"/>
+                            </svg>
+                            <p>Выберите график из списка слева</p>
+                        </div>
+
+                        <!-- Контейнер сетки (показывается после выбора графика) -->
+                        <div id="duty-grid-container" class="hidden">
+
+                            <!-- Toolbar: навигация + добавить человека -->
+                            <div class="duty-grid-toolbar">
+                                <div class="duty-month-nav">
+                                    <button id="duty-prev-month"  class="btn btn-outlined btn-xs" type="button">←</button>
+                                    <span   id="duty-month-label" class="duty-month-label"></span>
+                                    <button id="duty-next-month"  class="btn btn-outlined btn-xs" type="button">→</button>
+                                    <button id="duty-today-month" class="btn btn-text btn-xs"     type="button">Сегодня</button>
+                                </div>
+                                <button id="duty-add-person-btn" class="btn btn-outlined btn-sm" type="button">
+                                    + Добавить человека
+                                </button>
+                            </div>
+
+                            <!-- Поиск человека -->
+                            <div id="duty-person-search-wrap" class="duty-person-search hidden">
+                                <input type="text" id="duty-person-search-input"
+                                       placeholder="Поиск по ФИО…" autocomplete="off"
+                                       class="duty-person-search__input">
+                                <div id="duty-person-results" class="duty-person-results"></div>
+                            </div>
+
+                            <!-- Индикатор загрузки -->
+                            <div id="duty-grid-loading" class="hidden"
+                                 style="padding:16px; text-align:center;
+                                        color:var(--md-on-surface-hint); font-size:0.85rem;">
+                                Загрузка…
+                            </div>
+
+                            <!-- Таблица (горизонтальный скролл) -->
+                            <div class="duty-grid-wrap">
+                                <table id="duty-grid-table" class="duty-grid"></table>
+                            </div>
+
+                            <p class="duty-grid-hint">
+                                Нажмите на клетку чтобы выставить / снять наряд. При выставлении наряда
+                                все списки за эту дату с совпадающей должностью заполнятся автоматически.
+                            </p>
+
+                        </div><!-- /#duty-grid-container -->
+
+                    </div><!-- /.duty-grid-panel -->
+                </div><!-- /.duty-layout -->
+            </div><!-- /#tab-duty -->
+
+            <!-- ══════════════════════════════════════════════════════════════
+                 Tab: Боевой расчёт (Для Админа)
+                 ══════════════════════════════════════════════════════════════ -->
+            <div id="tab-combat" class="hidden" role="tabpanel">
+
+                <!-- Раскрывающийся Тулбар (как в редакторе) -->
+                <div class="tools-bar">
+                    <div class="tools-bar__buttons">
+                        <button class="tool-trigger active" data-panel="cc-panel-calendar-admin" type="button">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                <rect x="3" y="4" width="18" height="18" rx="2" ry="2"/>
+                                <line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/>
+                            </svg>
+                            Календарь расчётов
+                            <svg class="tool-trigger__chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                                <path d="M6 9l6 6 6-6"/>
+                            </svg>
+                        </button>
+                    </div>
+
+                    <!-- Сама панель календаря -->
+                    <div class="tools-panel open" id="cc-panel-calendar-admin">
+                        <div class="tools-panel__inner" style="padding-bottom:16px;">
+                            <!-- Навигация по неделям -->
+                            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:16px;">
+                                <button id="cc-prev-week-admin" class="btn btn-outlined btn-xs" type="button">← Пред.</button>
+                                <div style="display:flex; flex-direction:column; align-items:center; min-width:130px;">
+                                    <span id="cc-week-label-admin" style="font-size:0.85rem; font-weight:600; text-align:center;"></span>
+                                    <span id="cc-today-week-admin" style="font-size:0.7rem; color:var(--md-primary); cursor:pointer; margin-top:2px;">Текущая неделя</span>
+                                </div>
+                                <button id="cc-next-week-admin" class="btn btn-outlined btn-xs" type="button">След. →</button>
+                            </div>
+
+                            <!-- Горизонтальная сетка на 7 дней -->
+                            <div id="cc-instances-list-admin" style="display: grid; grid-template-columns: repeat(7, minmax(140px, 1fr)); gap: 8px; overflow-x: auto; padding-bottom: 4px;">
+                                <p class="hint" style="grid-column: 1 / -1; text-align: center;">Загрузка...</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Зона Редактора (внизу) -->
+                <div class="editor-panel" style="margin-top: 16px;">
+                    <div id="cc-view-empty-admin" style="padding:48px 24px; text-align:center; color:var(--md-on-surface-hint);">
+                        <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" style="margin-bottom:12px;">
+                            <rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/>
+                        </svg>
+                        <p style="font-size:.875rem;">Выберите расчёт на любой день из календаря сверху</p>
+                    </div>
+                    <div id="cc-view-panel-admin" class="hidden" style="padding: 24px;"></div>
+                </div>
+
+            </div><!-- /#tab-combat -->
 
         </div><!-- /.page -->
     </div><!-- /#admin-view -->
@@ -580,7 +873,6 @@
                     panel.classList.add('open');
                     btn.classList.add('active');
 
-                    // При открытии панели должностей — обновляем список
                     if (targetId === 'panel-positions') {
                         loadAndRenderPositions();
                     }

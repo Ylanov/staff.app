@@ -11,8 +11,12 @@ from typing import Literal, List, Optional, Any, Dict
 from app.db.database import get_db
 from app.models.user import User
 from app.models.event import Event, Group, Slot, Position, DEFAULT_COLUMNS
-from app.schemas.event import EventCreate, EventResponse, GroupCreate, GroupResponse, EventInstantiate, \
-    EventUpdateTemplate
+from app.models.duty import DutyMark, DutySchedule
+from app.models.person import Person
+from app.schemas.event import (
+    EventCreate, EventResponse, GroupCreate, GroupResponse,
+    EventInstantiate, EventUpdateTemplate,
+)
 from app.api.dependencies import get_current_active_admin
 from app.core.security import get_password_hash
 from app.core.websockets import manager
@@ -34,7 +38,6 @@ class PositionResponse(BaseModel):
 
 
 class ColumnConfig(BaseModel):
-    """Конфигурация одного столбца таблицы."""
     key:     str
     label:   str  = Field(..., min_length=1, max_length=100, strip_whitespace=True)
     type:    str  = Field(default="text")
@@ -99,7 +102,35 @@ class EventUpdatePayload(BaseModel):
     date:  Optional[date_type] = None
 
 
-# ─── Столбцы (columns) ───────────────────────────────────────────────────────
+# ─── Вспомогательная функция: наряд для даты ─────────────────────────────────
+
+def _get_duty_map_for_date(db: Session, target_date) -> dict:
+    """
+    Возвращает {position_id: Person} для заданной даты.
+
+    Берёт все DutyMark за эту дату у которых в графике задана должность.
+    Если на одну должность несколько человек — берётся последний (по id).
+    """
+    rows = (
+        db.query(DutyMark, DutySchedule, Person)
+        .join(DutySchedule, DutyMark.schedule_id == DutySchedule.id)
+        .join(Person,       DutyMark.person_id   == Person.id)
+        .filter(
+            DutyMark.duty_date       == target_date,
+            DutySchedule.position_id != None,       # noqa: E711
+        )
+        .order_by(DutyMark.id.asc())
+        .all()
+    )
+
+    duty_map: dict = {}
+    for mark, schedule, person in rows:
+        duty_map[schedule.position_id] = person
+
+    return duty_map
+
+
+# ─── Столбцы ─────────────────────────────────────────────────────────────────
 
 @router.get(
     "/events/{event_id}/columns",
@@ -111,10 +142,6 @@ def get_event_columns(
         db:            Session = Depends(get_db),
         current_admin: User    = Depends(get_current_active_admin),
 ):
-    """
-    Возвращает столбцы в порядке отображения.
-    Если конфиг не задан — возвращает DEFAULT_COLUMNS.
-    """
     event = db.query(Event).filter(Event.id == event_id).first()
     if not event:
         raise HTTPException(status_code=404, detail="Список не найден")
@@ -158,14 +185,13 @@ async def update_event_columns(
     return event.get_columns()
 
 
-# ─── Должности (глобальные) ───────────────────────────────────────────────────
+# ─── Должности ───────────────────────────────────────────────────────────────
 
 @router.get("/positions", response_model=List[PositionResponse])
 def get_all_positions(
         db:            Session = Depends(get_db),
         current_admin: User    = Depends(get_current_active_admin),
 ):
-    """Возвращает все должности — общие для всех списков."""
     return db.query(Position).order_by(Position.name).all()
 
 
@@ -175,7 +201,6 @@ async def create_position(
         db:            Session = Depends(get_db),
         current_admin: User    = Depends(get_current_active_admin),
 ):
-    """Создаёт новую глобальную должность."""
     existing = db.query(Position).filter(Position.name == position_in.name).first()
     if existing:
         raise HTTPException(status_code=409, detail="Должность с таким названием уже существует")
@@ -212,9 +237,13 @@ def get_all_events_admin(
 ):
     events = db.query(Event).order_by(Event.date.asc().nullslast(), Event.id.desc()).all()
     return [
-        {"id": e.id, "title": e.title,
-         "date": e.date.isoformat() if e.date else None,
-         "status": e.status, "is_template": e.is_template}
+        {
+            "id":          e.id,
+            "title":       e.title,
+            "date":        e.date.isoformat() if e.date else None,
+            "status":      e.status,
+            "is_template": e.is_template,
+        }
         for e in events
     ]
 
@@ -316,9 +345,11 @@ async def instantiate_template(
     if not template:
         raise HTTPException(status_code=404, detail="Шаблон не найден")
     if not template.is_template:
-        raise HTTPException(status_code=400, detail="Это не шаблон. Пометьте список как шаблон перед генерацией.")
+        raise HTTPException(
+            status_code=400,
+            detail="Это не шаблон. Пометьте список как шаблон перед генерацией.",
+        )
 
-    # Должности теперь глобальные — копировать не нужно
     groups = (
         db.query(Group)
         .options(selectinload(Group.slots))
@@ -332,6 +363,9 @@ async def instantiate_template(
     for target_date in payload.dates:
         weekday_str = WEEKDAYS[target_date.weekday()]
 
+        # Ищем кто в наряде на эту дату — заполняем слоты сразу при создании
+        duty_map = _get_duty_map_for_date(db, target_date)
+
         new_event = Event(
             title=f"{template.title} ({target_date.strftime('%d.%m.%Y')}, {weekday_str})",
             date=target_date,
@@ -343,21 +377,27 @@ async def instantiate_template(
         db.flush()
 
         for group in groups:
-            new_group = Group(event_id=new_event.id, name=group.name, order_num=group.order_num)
+            new_group = Group(
+                event_id=new_event.id,
+                name=group.name,
+                order_num=group.order_num,
+            )
             db.add(new_group)
             db.flush()
 
             for slot in group.slots:
+                person_on_duty = duty_map.get(slot.position_id) if slot.position_id else None
+
                 new_slot = Slot(
                     group_id=new_group.id,
                     position_id=slot.position_id,
                     department=slot.department,
                     callsign=slot.callsign,
                     note=slot.note,
-                    rank=None,
-                    full_name=None,
-                    doc_number=None,
-                    extra_data=None,
+                    full_name  = person_on_duty.full_name if person_on_duty else None,
+                    rank       = person_on_duty.rank      if person_on_duty else None,
+                    doc_number = None,
+                    extra_data = None,
                 )
                 db.add(new_slot)
 
@@ -380,7 +420,11 @@ async def create_group_in_event(
     event = db.query(Event).filter(Event.id == event_id).first()
     if not event:
         raise HTTPException(status_code=404, detail="Список не найден")
-    new_group = Group(event_id=event.id, name=group_in.name, order_num=group_in.order_num)
+    new_group = Group(
+        event_id=event.id,
+        name=group_in.name,
+        order_num=group_in.order_num,
+    )
     db.add(new_group)
     db.commit()
     db.refresh(new_group)
@@ -469,11 +513,26 @@ async def add_slot_to_group(
     if not group:
         raise HTTPException(status_code=404, detail="Группа не найдена")
 
-    new_slot = Slot(group_id=group_id, department=slot_in.department, position_id=slot_in.position_id)
+    # При добавлении новой строки — проверяем наряд на дату списка
+    person_on_duty = None
+    if slot_in.position_id:
+        event = db.query(Event).filter(Event.id == group.event_id).first()
+        if event and event.date:
+            duty_map = _get_duty_map_for_date(db, event.date)
+            person_on_duty = duty_map.get(slot_in.position_id)
+
+    new_slot = Slot(
+        group_id=group_id,
+        department=slot_in.department,
+        position_id=slot_in.position_id,
+        full_name  = person_on_duty.full_name if person_on_duty else None,
+        rank       = person_on_duty.rank      if person_on_duty else None,
+    )
     db.add(new_slot)
     db.commit()
     db.refresh(new_slot)
     await manager.broadcast({"event_id": group.event_id, "action": "update"})
+
     return {
         "id":          new_slot.id,
         "group_id":    new_slot.group_id,
@@ -495,7 +554,12 @@ async def delete_slot(
         db:            Session = Depends(get_db),
         current_admin: User    = Depends(get_current_active_admin),
 ):
-    slot = db.query(Slot).options(joinedload(Slot.group)).filter(Slot.id == slot_id).first()
+    slot = (
+        db.query(Slot)
+        .options(joinedload(Slot.group))
+        .filter(Slot.id == slot_id)
+        .first()
+    )
     if not slot:
         raise HTTPException(status_code=404, detail="Строка не найдена")
     event_id = slot.group.event_id
@@ -512,22 +576,31 @@ async def update_slot(
         db:            Session = Depends(get_db),
         current_admin: User    = Depends(get_current_active_admin),
 ):
-    slot = db.query(Slot).options(joinedload(Slot.group)).filter(Slot.id == slot_id).first()
+    slot = (
+        db.query(Slot)
+        .options(joinedload(Slot.group).joinedload(Group.event))
+        .filter(Slot.id == slot_id)
+        .first()
+    )
     if not slot:
         raise HTTPException(status_code=404, detail="Строка не найдена")
 
     if slot.version != slot_in.version:
         raise HTTPException(
             status_code=409,
-            detail="Данные были изменены другим пользователем. Таблица обновится автоматически.",
+            detail="Данные были изменены другим пользователем. "
+                   "Таблица обновится автоматически.",
         )
 
-    slot.position_id = slot_in.position_id
+    old_position_id = slot.position_id
+    new_position_id = slot_in.position_id
+
+    slot.position_id = new_position_id
     slot.department  = slot_in.department
-    slot.callsign    = slot_in.callsign  or None
-    slot.note        = slot_in.note      or None
-    slot.full_name   = slot_in.full_name or None
-    slot.rank        = slot_in.rank      or None
+    slot.callsign    = slot_in.callsign   or None
+    slot.note        = slot_in.note       or None
+    slot.full_name   = slot_in.full_name  or None
+    slot.rank        = slot_in.rank       or None
     slot.doc_number  = slot_in.doc_number or None
 
     if slot_in.extra_data is not None:
@@ -535,13 +608,43 @@ async def update_slot(
         existing_extra.update(slot_in.extra_data)
         slot.set_extra(existing_extra)
 
+    # ── Автозаполнение из наряда при смене должности ──────────────────────────
+    #
+    # Срабатывает когда:
+    #   1. Должность изменилась на новую (не просто сохранение той же)
+    #   2. Пользователь не вводит ФИО вручную (поле пустое в запросе)
+    #   3. Слот сейчас не заполнен (нет имени)
+    #   4. У события есть дата
+    #   5. На эту дату есть отметка наряда с нужной должностью
+    #
+    if (
+        new_position_id                         # новая должность задана
+        and new_position_id != old_position_id  # должность изменилась
+        and not slot_in.full_name               # ФИО не вводится вручную
+        and not slot.full_name                  # слот сейчас пустой
+    ):
+        event = slot.group.event
+        if event and event.date:
+            duty_map = _get_duty_map_for_date(db, event.date)
+            person_on_duty = duty_map.get(new_position_id)
+            if person_on_duty:
+                slot.full_name = person_on_duty.full_name
+                slot.rank      = person_on_duty.rank or slot.rank
+                print(f"[duty→update_slot] slot_id={slot_id} "
+                      f"pos {old_position_id}→{new_position_id} "
+                      f"→ '{person_on_duty.full_name}'")
+
     slot.version += 1
 
-    # ВАЖНО: передаем department для сохранения/обновления управления при заполнении из таблицы
+    # Обновляем базу людей если ФИО заполнено
     if slot.full_name and slot.full_name.strip():
-        upsert_person_from_slot(db=db, full_name=slot.full_name,
-                                rank=slot.rank, doc_number=slot.doc_number,
-                                department=slot.department)
+        upsert_person_from_slot(
+            db=db,
+            full_name=slot.full_name,
+            rank=slot.rank,
+            doc_number=slot.doc_number,
+            department=slot.department,
+        )
 
     db.commit()
     db.refresh(slot)
@@ -579,7 +682,10 @@ def create_user(
         current_admin: User    = Depends(get_current_active_admin),
 ):
     if db.query(User).filter(User.username == user_in.username).first():
-        raise HTTPException(status_code=409, detail="Пользователь с таким логином уже существует")
+        raise HTTPException(
+            status_code=409,
+            detail="Пользователь с таким логином уже существует",
+        )
 
     new_user = User(
         username=user_in.username,
@@ -602,25 +708,7 @@ def delete_user(
     if not user:
         raise HTTPException(status_code=404, detail="Пользователь не найден")
     if user.username == "admin":
-        raise HTTPException(status_code=403, detail="Нельзя удалить базового администратора")
-    if user.id == current_admin.id:
-        raise HTTPException(status_code=403, detail="Нельзя удалить собственный аккаунт")
+        raise HTTPException(status_code=403, detail="Нельзя удалить главного администратора")
     db.delete(user)
     db.commit()
-    return {"message": "Пользователь успешно удалён"}
-
-
-@router.patch("/users/{user_id}/activate")
-def toggle_user_active(
-        user_id:       int,
-        db:            Session = Depends(get_db),
-        current_admin: User    = Depends(get_current_active_admin),
-):
-    user = db.query(User).filter(User.id == user_id).first()
-    if not user:
-        raise HTTPException(status_code=404, detail="Пользователь не найден")
-    if user.username == "admin":
-        raise HTTPException(status_code=403, detail="Нельзя деактивировать базового администратора")
-    user.is_active = not user.is_active
-    db.commit()
-    return {"message": "Статус изменён", "is_active": user.is_active}
+    return {"message": "Пользователь удалён"}

@@ -6,7 +6,7 @@ let reconnectTimeout  = null;
 let reconnectAttempts = 0;
 let heartbeatInterval = null;
 
-// 🔥 ДОБАВЛЕНО: контроль последнего pong
+// 🔥 Контроль последнего pong
 let lastPongTimestamp = Date.now();
 
 const MAX_RECONNECT_DELAY = 30_000; // максимум 30 сек
@@ -26,7 +26,7 @@ function connect() {
         console.log('✅ WebSocket connected');
         reconnectAttempts = 0;
 
-        // 🔥 ДОБАВЛЕНО: сбрасываем таймер pong
+        // Сбрасываем таймер pong
         lastPongTimestamp = Date.now();
 
         startHeartbeat();
@@ -36,20 +36,29 @@ function connect() {
         try {
             const data = JSON.parse(event.data);
 
-            // 🔥 ДОБАВЛЕНО: обработка pong
+            // Обработка pong
             if (data.type === 'pong') {
                 lastPongTimestamp = Date.now();
                 console.log('💓 pong received');
                 return;
             }
 
-            // Игнорируем служебные сообщения (pong и т.п.), реагируем только на update
+            // Игнорируем служебные сообщения (pong и т.п.), реагируем на обновления
             if (data.action === 'update') {
-                console.log('📩 WS message:', data);
+                console.log('📩 WS message [update]:', data);
                 document.dispatchEvent(
                     new CustomEvent('datachanged', { detail: { eventId: data.event_id } })
                 );
             }
+
+            // Обновления боевого расчёта
+            if (data.action === 'combat_calc_update' || data.action === 'combat_calc_slot_update') {
+                console.log(`📩 WS message [${data.action}]:`, data);
+                document.dispatchEvent(
+                    new CustomEvent('datachanged', { detail: data })
+                );
+            }
+
         } catch (error) {
             console.error('❌ WS JSON parse error:', error);
         }
@@ -93,7 +102,7 @@ function startHeartbeat() {
     heartbeatInterval = setInterval(() => {
         if (ws && ws.readyState === WebSocket.OPEN) {
 
-            // 🔥 ДОБАВЛЕНО: проверка "живости" соединения
+            // Проверка "живости" соединения
             const now = Date.now();
             const timeSinceLastPong = now - lastPongTimestamp;
 
@@ -131,9 +140,7 @@ export function sendMessage(data) {
 
 /**
  * Инициализация соединения.
- * БАГ-ФИКС: проверяем оба «живых» состояния — CONNECTING и OPEN.
- * Раньше проверялся только OPEN: если вызвать initWebSocket() пока
- * соединение ещё устанавливается (CONNECTING), создавался второй WebSocket.
+ * Проверяем оба «живых» состояния — CONNECTING и OPEN.
  */
 export function initWebSocket() {
     if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) {
@@ -145,9 +152,6 @@ export function initWebSocket() {
 
 /**
  * Ручное закрытие (при logout).
- * БАГ-ФИКС: сбрасываем reconnectAttempts в 0.
- * Раньше счётчик не сбрасывался, и после повторного login первое
- * переподключение при обрыве могло ждать до 30s вместо 1s.
  */
 export function closeWebSocket() {
     console.log('🛑 Closing WebSocket manually');
@@ -160,8 +164,7 @@ export function closeWebSocket() {
 
     stopHeartbeat();
 
-    // БАГ-ФИКС: сбрасываем счётчик попыток, чтобы следующая сессия
-    // начинала переподключение с задержки BASE_DELAY (1s), а не с максимума
+    // Сбрасываем счётчик попыток, чтобы следующая сессия начиналась с 1 секунды
     reconnectAttempts = 0;
 
     if (ws) {

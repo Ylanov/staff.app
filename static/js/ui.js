@@ -72,12 +72,16 @@ export function switchAdminTab(tab) {
     const tabEditor  = document.getElementById('tab-editor');
     const tabUsers   = document.getElementById('tab-users');
     const tabPersons = document.getElementById('tab-persons');
+    const tabDuty    = document.getElementById('tab-duty');
+    const tabCombat  = document.getElementById('tab-combat');
     const tabBtns    = document.querySelectorAll('.tab-btn');
 
     // Скрываем всё
     tabEditor?.classList.add('hidden');
     tabUsers?.classList.add('hidden');
     tabPersons?.classList.add('hidden');
+    tabDuty?.classList.add('hidden');
+    tabCombat?.classList.add('hidden');
     tabBtns.forEach(btn => {
         btn.classList.remove('active');
         btn.setAttribute('aria-selected', 'false');
@@ -95,8 +99,18 @@ export function switchAdminTab(tab) {
         tabPersons?.classList.remove('hidden');
         tabBtns[2]?.classList.add('active');
         tabBtns[2]?.setAttribute('aria-selected', 'true');
-        // Загружаем базу людей при первом открытии вкладки
         loadPersons();
+    } else if (tab === 'duty') {
+        tabDuty?.classList.remove('hidden');
+        tabBtns[3]?.classList.add('active');
+        tabBtns[3]?.setAttribute('aria-selected', 'true');
+        // Динамический импорт чтобы избежать circular deps
+        import('./duty.js').then(m => m.loadSchedules());
+    } else if (tab === 'combat') {
+        tabCombat?.classList.remove('hidden');
+        tabBtns[4]?.classList.add('active');
+        tabBtns[4]?.setAttribute('aria-selected', 'true');
+        import('./combat_calc.js').then(m => m.initCombatCalc(true));
     }
 }
 

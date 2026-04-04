@@ -10,6 +10,8 @@ from app.core.config import settings
 
 # 🔥 база и metadata
 from app.db.database import Base
+from app.models import duty
+import app.models.combat_calc
 
 # ❗ ОБЯЗАТЕЛЬНО импортируем ВСЕ модели
 from app.models.user import User

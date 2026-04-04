@@ -4,6 +4,8 @@ import * as auth       from './auth.js';
 import * as ui         from './ui.js';
 import * as admin      from './admin.js';
 import * as department from './department.js';
+import * as duty       from './duty.js';
+import * as combatCalc from './combat_calc.js';
 
 window.app = {
     deleteUser: admin.deleteUser
@@ -38,8 +40,8 @@ function bindEvents() {
         }
     });
 
-    // UI — три вкладки: editor / users / persons
-    const tabMap = ['editor', 'users', 'persons'];
+    // UI — вкладки: editor / users / persons / duty / combat
+    const tabMap = ['editor', 'users', 'persons', 'duty', 'combat'];
     document.querySelectorAll('.tab-btn').forEach((btn, index) => {
         btn.addEventListener('click', () => ui.switchAdminTab(tabMap[index] ?? 'editor'));
     });
@@ -96,6 +98,9 @@ function bindEvents() {
     // Планировщик расписания
     admin.initSchedule();
 
+    // Графики наряда
+    duty.initDuty();
+
     // Рендерим сетку расписания когда панель открывается
     document.querySelectorAll('.tool-trigger').forEach(btn => {
         btn.addEventListener('click', () => {
@@ -103,6 +108,15 @@ function bindEvents() {
                 setTimeout(() => admin.renderScheduleGrid(), 50);
             }
         });
+    });
+
+    // Инициализация боевого расчёта (для управления)
+    combatCalc.initCombatCalc(false);
+
+    // В обработчике переключения на вкладку «Боевой расчёт» (управление)
+    document.getElementById('cc-dept-tab-btn')?.addEventListener('click', () => {
+        document.getElementById('dept-combat-calc')?.classList.toggle('hidden');
+        combatCalc.loadCombatInstances();
     });
 }
 
