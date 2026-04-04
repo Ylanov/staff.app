@@ -5,6 +5,8 @@ import { showView, formatRole, loadEventsDropdowns, setUserDisplay } from './ui.
 import { initWebSocket, closeWebSocket } from './websockets.js';
 import { loadUsers, listenForUpdates as listenForAdminUpdates } from './admin.js';
 import { listenForUpdates as listenForDeptUpdates } from './department.js';
+import * as deptDuty   from './dept_duty.js';
+import * as combatCalc from './combat_calc.js';
 
 let isInitializing = false;
 
@@ -80,12 +82,13 @@ async function _doInitSession() {
         return;
     }
 
-    // Сохраняем роль глобально, чтобы другие модули (например department.js) могли её использовать
+    // Сохраняем роль глобально, чтобы другие модули могли её использовать
     window.currentUserRole = user.role;
 
     setUserDisplay(user.username);
     initWebSocket();
 
+    // Загружаем списки (бэкенд сам отфильтрует шаблоны для department)
     const dataPromises = [loadEventsDropdowns()];
     if (user.role === 'admin') {
         dataPromises.push(loadUsers());
@@ -113,10 +116,18 @@ async function _doInitSession() {
                 <span>Режим заполнения</span>
             `;
         }
+
+        // Инициализируем данные Боевого Расчёта для Админа
+        combatCalc.initCombatCalc(true);
+
     } else {
         showView('department-view');
         listenForDeptUpdates();
         if (adminModeBtn) adminModeBtn.classList.add('hidden');
+
+        // ✅ Инициализируем графики и Боевой Расчёт ТОЛЬКО после успешной авторизации
+        combatCalc.initCombatCalc(false);
+        await deptDuty.loadDeptDutyData();
     }
 }
 

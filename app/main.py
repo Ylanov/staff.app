@@ -14,6 +14,8 @@ from app.db.database import SessionLocal
 from app.api.v1.routers import auth, admin, slots, export, persons, duty   # ← добавлен duty
 from app.api.v1.routers import combat_calc
 from app.api.v1.routers import settings as settings_router
+from app.api.v1.routers import dept_duty
+from app.api.v1.routers import dashboard
 from app.db.init_db import init_db
 from app.core.websockets import manager, handle_websocket_connection
 
@@ -79,6 +81,9 @@ app.include_router(export.router,           prefix="/api/v1/export",   tags=["Э
 app.include_router(persons.router,          prefix="/api/v1/persons",  tags=["Справочник людей"])
 app.include_router(settings_router.router,  prefix="/api/v1/settings", tags=["Настройки"])
 app.include_router(duty.router,             prefix="/api/v1/admin",    tags=["Графики наряда"])  # ← НОВОЕ
+
+app.include_router(dashboard.router, prefix="/api/v1/admin", tags=["Дашборд"])
+app.include_router(dept_duty.router, prefix="/api/v1/dept", tags=["Графики наряда (управление)"])
 
 app.include_router(combat_calc.router,      prefix="/api/v1/admin",    tags=["Боевой расчёт (admin)"])
 app.include_router(combat_calc.router,      prefix="/api/v1",          tags=["Боевой расчёт"])

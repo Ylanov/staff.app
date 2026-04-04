@@ -13,7 +13,7 @@ export function showView(viewId) {
     document.getElementById(viewId)?.classList.remove('hidden');
 
     // Navbar: скрыт только на логин-экране
-    const navbar = document.getElementById('navbar');
+    const navbar   = document.getElementById('navbar');
     const userChip = document.getElementById('user-chip');
     if (viewId === 'login-view') {
         navbar?.classList.add('hidden');
@@ -67,16 +67,26 @@ export function setUserDisplay(username) {
 }
 
 // ─── Admin tabs ───────────────────────────────────────────────────────────────
+//
+// Порядок вкладок (индексы кнопок .tab-btn):
+//   0 → dashboard   (Дашборд)        ← НОВАЯ, первая
+//   1 → editor      (Редактор списков)
+//   2 → users       (Пользователи)
+//   3 → persons     (База людей)
+//   4 → duty        (Графики наряда)
+//   5 → combat      (Боевой расчёт)
 
 export function switchAdminTab(tab) {
-    const tabEditor  = document.getElementById('tab-editor');
-    const tabUsers   = document.getElementById('tab-users');
-    const tabPersons = document.getElementById('tab-persons');
-    const tabDuty    = document.getElementById('tab-duty');
-    const tabCombat  = document.getElementById('tab-combat');
-    const tabBtns    = document.querySelectorAll('.tab-btn');
+    const tabDashboard = document.getElementById('tab-dashboard');
+    const tabEditor    = document.getElementById('tab-editor');
+    const tabUsers     = document.getElementById('tab-users');
+    const tabPersons   = document.getElementById('tab-persons');
+    const tabDuty      = document.getElementById('tab-duty');
+    const tabCombat    = document.getElementById('tab-combat');
+    const tabBtns      = document.querySelectorAll('.tab-btn');
 
-    // Скрываем всё
+    // Скрываем все вкладки и сбрасываем кнопки
+    tabDashboard?.classList.add('hidden');
     tabEditor?.classList.add('hidden');
     tabUsers?.classList.add('hidden');
     tabPersons?.classList.add('hidden');
@@ -87,29 +97,40 @@ export function switchAdminTab(tab) {
         btn.setAttribute('aria-selected', 'false');
     });
 
-    if (tab === 'editor') {
-        tabEditor?.classList.remove('hidden');
+    if (tab === 'dashboard') {
+        tabDashboard?.classList.remove('hidden');
         tabBtns[0]?.classList.add('active');
         tabBtns[0]?.setAttribute('aria-selected', 'true');
-    } else if (tab === 'users') {
-        tabUsers?.classList.remove('hidden');
+        // Загружаем дашборд при переключении на вкладку
+        import('./dashboard.js').then(m => m.loadDashboard()).catch(() => {});
+
+    } else if (tab === 'editor') {
+        tabEditor?.classList.remove('hidden');
         tabBtns[1]?.classList.add('active');
         tabBtns[1]?.setAttribute('aria-selected', 'true');
-    } else if (tab === 'persons') {
-        tabPersons?.classList.remove('hidden');
+
+    } else if (tab === 'users') {
+        tabUsers?.classList.remove('hidden');
         tabBtns[2]?.classList.add('active');
         tabBtns[2]?.setAttribute('aria-selected', 'true');
-        loadPersons();
-    } else if (tab === 'duty') {
-        tabDuty?.classList.remove('hidden');
+
+    } else if (tab === 'persons') {
+        tabPersons?.classList.remove('hidden');
         tabBtns[3]?.classList.add('active');
         tabBtns[3]?.setAttribute('aria-selected', 'true');
-        // Динамический импорт чтобы избежать circular deps
-        import('./duty.js').then(m => m.loadSchedules());
-    } else if (tab === 'combat') {
-        tabCombat?.classList.remove('hidden');
+        loadPersons();
+
+    } else if (tab === 'duty') {
+        tabDuty?.classList.remove('hidden');
         tabBtns[4]?.classList.add('active');
         tabBtns[4]?.setAttribute('aria-selected', 'true');
+        // Динамический импорт чтобы избежать circular deps
+        import('./duty.js').then(m => m.loadSchedules());
+
+    } else if (tab === 'combat') {
+        tabCombat?.classList.remove('hidden');
+        tabBtns[5]?.classList.add('active');
+        tabBtns[5]?.setAttribute('aria-selected', 'true');
         import('./combat_calc.js').then(m => m.initCombatCalc(true));
     }
 }
@@ -129,9 +150,9 @@ export async function loadEventsDropdowns() {
         const events = await api.get('/slots/events');
         _cachedEvents = events;
 
-        // 🔥 Разделяем списки и шаблоны
+        // Разделяем списки и шаблоны
         const templates = events.filter(e => e.is_template);
-        const regular = events.filter(e => !e.is_template);
+        const regular   = events.filter(e => !e.is_template);
 
         // Формируем красивые группы для обычных меню
         let generalOptions = '<option value="" disabled selected>— Выберите список —</option>';
@@ -165,7 +186,7 @@ export async function loadEventsDropdowns() {
         // Карточки для department view
         renderDeptEventCards(regular);
 
-        // 🔥 Только шаблоны (для генерации)
+        // Только шаблоны (для генерации расписания)
         const templateSelect = document.getElementById('template-select-id');
         if (templateSelect) {
             let tplOptions = '<option value="" disabled selected>— Выберите шаблон —</option>';
@@ -189,7 +210,7 @@ export async function loadEventsDropdowns() {
     }
 }
 
-// ─── Department: карточки списков ────────────────────────────
+// ─── Department: карточки списков ─────────────────────────────────────────────
 
 const WEEKDAY_NAMES_RU = ['Вс', 'Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб'];
 const WEEKDAY_FULL_RU  = ['Воскресенье', 'Понедельник', 'Вторник', 'Среда', 'Четверг', 'Пятница', 'Суббота'];
@@ -200,12 +221,12 @@ function getDayLabel(isoDate) {
     const tomorrow = new Date(today); tomorrow.setDate(today.getDate() + 1);
     const d        = new Date(isoDate + 'T00:00:00');
 
-    if (d.getTime() === today.getTime())    return { text: 'Сегодня',  accent: true };
-    if (d.getTime() === tomorrow.getTime()) return { text: 'Завтра',   accent: false };
+    if (d.getTime() === today.getTime())    return { text: 'Сегодня', accent: true };
+    if (d.getTime() === tomorrow.getTime()) return { text: 'Завтра',  accent: false };
 
     // Если в пределах текущей недели — показываем день недели
     const diff = Math.round((d - today) / 86400000);
-    if (diff > 1 && diff <= 6) return { text: WEEKDAY_FULL_RU[d.getDay()], accent: false };
+    if (diff > 1 && diff <= 6)  return { text: WEEKDAY_FULL_RU[d.getDay()], accent: false };
     if (diff < 0 && diff >= -2) return { text: 'Прошедший', accent: false, muted: true };
 
     return null;
@@ -213,10 +234,10 @@ function getDayLabel(isoDate) {
 
 function formatDisplayDate(isoDate) {
     if (!isoDate) return '';
-    const d = new Date(isoDate + 'T00:00:00');
-    const dd  = String(d.getDate()).padStart(2, '0');
-    const mm  = String(d.getMonth() + 1).padStart(2, '0');
-    const wd  = WEEKDAY_NAMES_RU[d.getDay()];
+    const d  = new Date(isoDate + 'T00:00:00');
+    const dd = String(d.getDate()).padStart(2, '0');
+    const mm = String(d.getMonth() + 1).padStart(2, '0');
+    const wd = WEEKDAY_NAMES_RU[d.getDay()];
     return `${wd}, ${dd}.${mm}`;
 }
 
@@ -237,8 +258,8 @@ export function renderDeptEventCards(events) {
     }
 
     grid.innerHTML = events.map((event, i) => {
-        const dayLabel   = getDayLabel(event.date);
-        const dateStr    = formatDisplayDate(event.date);
+        const dayLabel = getDayLabel(event.date);
+        const dateStr  = formatDisplayDate(event.date);
 
         const labelHtml = dayLabel
             ? `<span class="dept-event-card__day-label${dayLabel.accent ? ' dept-event-card__day-label--today' : dayLabel.muted ? ' dept-event-card__day-label--muted' : ''}">${dayLabel.text}</span>`
@@ -267,7 +288,7 @@ export function renderDeptEventCards(events) {
             <svg class="dept-event-card__arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
                 <path d="M9 18l6-6-6-6"/>
             </svg>
-        </button>`
+        </button>`;
     }).join('');
 }
 
@@ -292,13 +313,13 @@ let _editingId     = null;
 let _searchTimeout = null;
 
 export async function loadPersons(searchQuery = '') {
-    const tbody   = document.getElementById('persons-tbody');
-    const empty   = document.getElementById('persons-empty');
+    const tbody = document.getElementById('persons-tbody');
+    const empty = document.getElementById('persons-empty');
     if (!tbody) return;
 
     try {
-        const params  = searchQuery ? `?q=${encodeURIComponent(searchQuery)}&limit=500` : '?limit=500';
-        _personsData  = await api.get(`/persons${params}`);
+        const params = searchQuery ? `?q=${encodeURIComponent(searchQuery)}&limit=500` : '?limit=500';
+        _personsData = await api.get(`/persons${params}`);
         renderPersonsTable(_personsData);
         empty?.classList.toggle('hidden', _personsData.length > 0);
     } catch (err) {
@@ -365,7 +386,7 @@ function renderPersonsTable(persons) {
                 <td>
                     <div style="display:flex;gap:4px;">
                         <button class="btn btn-outlined btn-xs person-edit-btn" data-person-id="${p.id}" type="button">✎</button>
-                        <button class="btn btn-danger btn-xs person-del-btn"  data-person-id="${p.id}" type="button">✕</button>
+                        <button class="btn btn-danger btn-xs person-del-btn"    data-person-id="${p.id}" type="button">✕</button>
                     </div>
                 </td>
             </tr>`;
@@ -432,7 +453,8 @@ export function initPersonsTab() {
         if (deptSelect && window.availableRoles) {
             window.availableRoles.forEach(r => {
                 const opt = document.createElement('option');
-                opt.value = r; opt.textContent = formatRole(r);
+                opt.value = r;
+                opt.textContent = formatRole(r);
                 deptSelect.appendChild(opt);
             });
         }
@@ -461,7 +483,7 @@ export function initPersonsTab() {
             formData.append('file', file);
             const orig = importBtn.innerHTML;
             importBtn.innerHTML = '⏳ Загрузка...';
-            importBtn.disabled = true;
+            importBtn.disabled  = true;
             try {
                 const res = await api.upload('/persons/import', formData);
                 await loadPersons(document.getElementById('persons-search')?.value?.trim() || '');
@@ -470,8 +492,8 @@ export function initPersonsTab() {
                 window.showSnackbar?.(err.message || 'Ошибка при импорте файла', 'error');
             } finally {
                 importBtn.innerHTML = orig;
-                importBtn.disabled = false;
-                importInput.value  = '';
+                importBtn.disabled  = false;
+                importInput.value   = '';
             }
         });
     }
@@ -490,8 +512,9 @@ export function initPersonsTab() {
         const form = document.getElementById('persons-add-form');
         form?.classList.add('hidden');
         if (form) form.style.display = 'none';
-        ['person-fullname','person-rank','person-doc'].forEach(id => {
-            const el = document.getElementById(id); if (el) el.value = '';
+        ['person-fullname', 'person-rank', 'person-doc'].forEach(id => {
+            const el = document.getElementById(id);
+            if (el) el.value = '';
         });
     });
 
@@ -505,9 +528,15 @@ export function initPersonsTab() {
         if (!name) { window.showSnackbar?.('Введите ФИО', 'error'); return; }
 
         try {
-            await api.post('/persons', { full_name: name, rank: rank || null, doc_number: doc || null, department: dept });
-            ['person-fullname','person-rank','person-doc'].forEach(id => {
-                const el = document.getElementById(id); if (el) el.value = '';
+            await api.post('/persons', {
+                full_name:  name,
+                rank:       rank || null,
+                doc_number: doc  || null,
+                department: dept,
+            });
+            ['person-fullname', 'person-rank', 'person-doc'].forEach(id => {
+                const el = document.getElementById(id);
+                if (el) el.value = '';
             });
             const form = document.getElementById('persons-add-form');
             form?.classList.add('hidden');
@@ -519,7 +548,7 @@ export function initPersonsTab() {
         }
     });
 
-    // Делегирование — таблица
+    // Делегирование событий — таблица людей
     document.getElementById('persons-tbody')?.addEventListener('click', (e) => {
         const editBtn    = e.target.closest('.person-edit-btn');
         const delBtn     = e.target.closest('.person-del-btn');
@@ -535,8 +564,7 @@ export function initPersonsTab() {
 
 // ─── Автодополнение ФИО ───────────────────────────────────────────────────────
 
-let _acTimeout  = null;
-let _acActive   = false;
+let _acTimeout = null;
 
 export function initAutocomplete() {
     // Единый обработчик для полей ввода имени
@@ -548,7 +576,7 @@ export function initAutocomplete() {
         triggerAutocomplete(input, slotId);
     };
 
-    // Привязываем и к таблице управлений, и к главной таблице админа!
+    // Привязываем и к таблице управлений, и к главной таблице админа
     document.getElementById('slots-tbody')?.addEventListener('input', handleInput);
     document.getElementById('master-tbody')?.addEventListener('input', handleInput);
 

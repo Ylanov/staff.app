@@ -14,6 +14,7 @@
   GET    /admin/schedules/{id}/diagnose?date=YYYY-MM-DD – диагностика совпадений
 """
 
+import logging
 from datetime import date as date_type
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -30,6 +31,7 @@ from app.models.duty import DutySchedule, DutySchedulePerson, DutyMark
 from app.api.dependencies import get_current_active_admin
 from app.core.websockets import manager
 
+logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
@@ -110,7 +112,7 @@ async def create_schedule(
     db.add(s)
     db.commit()
     db.refresh(s)
-    print(f"[duty] Created schedule id={s.id} title='{s.title}' position_id={s.position_id} position_name={s.position_name}")
+    logger.debug(f"Created schedule id={s.id} title='{s.title}' position_id={s.position_id} position_name={s.position_name}")
     return ScheduleResponse(
         id=s.id, title=s.title,
         position_id=s.position_id, position_name=s.position_name,
@@ -255,6 +257,7 @@ async def toggle_mark(
     Поставить или снять отметку наряда.
     При постановке — автозаполняет слоты в списках за эту дату
     где position_id совпадает с должностью графика.
+    Использует joinedload для избежания проблемы N+1 запросов к БД.
     """
     schedule = db.query(DutySchedule).filter(DutySchedule.id == schedule_id).first()
     if not schedule:
@@ -274,7 +277,7 @@ async def toggle_mark(
     if existing:
         db.delete(existing)
         db.commit()
-        print(f"[duty] Removed mark: person={person.full_name} date={payload.duty_date}")
+        logger.debug(f"Removed mark: person={person.full_name} date={payload.duty_date}")
         return {"action": "removed", "filled_events_count": 0}
 
     # ── Поставить метку ───────────────────────────────────────────────────────
@@ -285,22 +288,19 @@ async def toggle_mark(
     )
     db.add(mark)
 
-    # ── Диагностика: что есть в БД за эту дату ───────────────────────────────
-    print(f"[duty] ─────────────────────────────────────────────────────")
-    print(f"[duty] Toggle ON: person='{person.full_name}' date={payload.duty_date}")
-    print(f"[duty] Schedule: id={schedule.id} title='{schedule.title}' position_id={schedule.position_id}")
+    logger.debug(f"Toggle ON: person='{person.full_name}' date={payload.duty_date}")
 
     # ── Автозаполнение ────────────────────────────────────────────────────────
     affected_event_ids = set()
     fill_log           = []
 
     if not schedule.position_id:
-        print(f"[duty] ⚠️  schedule.position_id is None — автозаполнение пропущено")
-        print(f"[duty]    Создайте график с привязкой к должности для автозаполнения")
+        logger.warning(f"schedule.position_id is None — автозаполнение пропущено")
     else:
-        # Ищем все НЕ-шаблонные списки за эту дату
+        # Ищем все НЕ-шаблонные списки за эту дату + загружаем группы и слоты ОДНИМ запросом (N+1 Fix)
         events_on_date = (
             db.query(Event)
+            .options(joinedload(Event.groups).joinedload(Group.slots))
             .filter(
                 Event.date        == payload.duty_date,
                 Event.is_template == False,
@@ -308,40 +308,20 @@ async def toggle_mark(
             .all()
         )
 
-        print(f"[duty] Events on {payload.duty_date}: {len(events_on_date)}")
+        logger.debug(f"Events on {payload.duty_date}: {len(events_on_date)}")
 
         if not events_on_date:
-            # Диагностика: покажем что вообще есть в БД за близкие даты
             nearby = db.execute(
                 text("SELECT id, title, date, is_template FROM events "
                      "WHERE date IS NOT NULL AND is_template = false "
                      "ORDER BY ABS(date - :d) LIMIT 5"),
                 {"d": payload.duty_date}
             ).fetchall()
-            print(f"[duty] ⚠️  Нет списков на {payload.duty_date}. Ближайшие: {nearby}")
+            logger.warning(f"Нет списков на {payload.duty_date}. Ближайшие: {nearby}")
         else:
             for event in events_on_date:
-                print(f"[duty]   Event id={event.id} title='{event.title}' status={event.status}")
-
-                # Загружаем группы и слоты отдельным запросом
-                groups = (
-                    db.query(Group)
-                    .filter(Group.event_id == event.id)
-                    .all()
-                )
-
-                for group in groups:
-                    slots = (
-                        db.query(Slot)
-                        .filter(Slot.group_id == group.id)
-                        .all()
-                    )
-                    print(f"[duty]     Group '{group.name}': {len(slots)} slots")
-
-                    for slot in slots:
-                        print(f"[duty]       Slot id={slot.id} position_id={slot.position_id} "
-                              f"current_name='{slot.full_name}'")
-
+                for group in event.groups:
+                    for slot in group.slots:
                         if slot.position_id == schedule.position_id:
                             old_name = slot.full_name
                             slot.full_name = person.full_name
@@ -356,13 +336,9 @@ async def toggle_mark(
                                 "old_name":    old_name,
                                 "new_name":    person.full_name,
                             })
-                            print(f"[duty]       ✅ Заполнено: '{old_name}' → '{person.full_name}'")
-                        else:
-                            print(f"[duty]       ✗  position_id {slot.position_id} ≠ {schedule.position_id}")
+                            logger.debug(f"Заполнено: '{old_name}' → '{person.full_name}' (slot_id={slot.id})")
 
-    print(f"[duty] Итого заполнено событий: {len(affected_event_ids)}, слотов: {len(fill_log)}")
-    print(f"[duty] ─────────────────────────────────────────────────────")
-
+    logger.debug(f"Итого заполнено событий: {len(affected_event_ids)}, слотов: {len(fill_log)}")
     db.commit()
 
     # Рассылаем WebSocket-уведомления
@@ -374,7 +350,6 @@ async def toggle_mark(
         "filled_events_count": len(affected_event_ids),
         "filled_slots_count":  len(fill_log),
         "fill_log":            fill_log,
-        # Диагностика для фронтенда
         "debug": {
             "schedule_position_id": schedule.position_id,
             "duty_date":            payload.duty_date.isoformat(),
@@ -394,6 +369,7 @@ def diagnose_schedule(
     """
     Диагностический эндпоинт: показывает почему автозаполнение
     сработало или не сработало для заданной даты.
+    Также оптимизирован с помощью joinedload.
     """
     from datetime import date as date_type_cls
 
@@ -406,19 +382,18 @@ def diagnose_schedule(
     except ValueError:
         raise HTTPException(status_code=400, detail="Формат даты: YYYY-MM-DD")
 
-    # Все списки за эту дату
+    # Оптимизированный запрос со связями
     events = (
         db.query(Event)
+        .options(joinedload(Event.groups).joinedload(Group.slots).joinedload(Slot.position))
         .filter(Event.date == check_date, Event.is_template == False)
         .all()
     )
 
     events_info = []
     for event in events:
-        groups = db.query(Group).filter(Group.event_id == event.id).all()
         groups_info = []
-        for group in groups:
-            slots = db.query(Slot).filter(Slot.group_id == group.id).all()
+        for group in event.groups:
             slots_info = [
                 {
                     "slot_id":            s.id,
@@ -427,7 +402,7 @@ def diagnose_schedule(
                     "full_name":          s.full_name,
                     "matches_schedule":   s.position_id == schedule.position_id,
                 }
-                for s in slots
+                for s in group.slots
             ]
             groups_info.append({
                 "group_id":   group.id,
@@ -441,7 +416,6 @@ def diagnose_schedule(
             "groups":     groups_info,
         })
 
-    # Соответствующая позиция
     position = None
     if schedule.position_id:
         pos = db.query(Position).filter(Position.id == schedule.position_id).first()

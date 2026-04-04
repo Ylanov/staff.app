@@ -6,11 +6,10 @@ let reconnectTimeout  = null;
 let reconnectAttempts = 0;
 let heartbeatInterval = null;
 
-// 🔥 Контроль последнего pong
 let lastPongTimestamp = Date.now();
 
-const MAX_RECONNECT_DELAY = 30_000; // максимум 30 сек
-const BASE_DELAY          = 1_000;  // старт 1 сек
+const MAX_RECONNECT_DELAY = 30_000;
+const BASE_DELAY          = 1_000;
 
 // ─── Создание соединения ──────────────────────────────────────────────────────
 
@@ -25,10 +24,7 @@ function connect() {
     ws.onopen = function () {
         console.log('✅ WebSocket connected');
         reconnectAttempts = 0;
-
-        // Сбрасываем таймер pong
         lastPongTimestamp = Date.now();
-
         startHeartbeat();
     };
 
@@ -36,22 +32,21 @@ function connect() {
         try {
             const data = JSON.parse(event.data);
 
-            // Обработка pong
             if (data.type === 'pong') {
                 lastPongTimestamp = Date.now();
                 console.log('💓 pong received');
                 return;
             }
 
-            // Игнорируем служебные сообщения (pong и т.п.), реагируем на обновления
             if (data.action === 'update') {
                 console.log('📩 WS message [update]:', data);
                 document.dispatchEvent(
                     new CustomEvent('datachanged', { detail: { eventId: data.event_id } })
                 );
+                // Уведомляем дашборд об изменении — обновится только если вкладка открыта
+                import('./dashboard.js').then(m => m.onWsUpdate()).catch(() => {});
             }
 
-            // Обновления боевого расчёта
             if (data.action === 'combat_calc_update' || data.action === 'combat_calc_slot_update') {
                 console.log(`📩 WS message [${data.action}]:`, data);
                 document.dispatchEvent(
@@ -71,8 +66,6 @@ function connect() {
     };
 
     ws.onerror = function (error) {
-        // onerror всегда сопровождается onclose — реконнект запустится там.
-        // Здесь только логируем, явный ws.close() не нужен: браузер закроет сам.
         console.error('🔥 WebSocket error:', error);
     };
 }
@@ -80,7 +73,6 @@ function connect() {
 // ─── Реконнект с экспоненциальной задержкой ───────────────────────────────────
 
 function scheduleReconnect() {
-    // Если таймер уже запущен — не дублируем
     if (reconnectTimeout) return;
 
     reconnectAttempts += 1;
@@ -94,27 +86,24 @@ function scheduleReconnect() {
     }, delay);
 }
 
-// ─── Heartbeat — держим соединение живым ──────────────────────────────────────
+// ─── Heartbeat ────────────────────────────────────────────────────────────────
 
 function startHeartbeat() {
-    stopHeartbeat(); // защита от двойного запуска
+    stopHeartbeat();
 
     heartbeatInterval = setInterval(() => {
+        const timeSinceLastPong = Date.now() - lastPongTimestamp;
+
+        if (timeSinceLastPong > 45_000) {
+            console.warn('💀 No pong received for 45s — forcing reconnect...');
+            if (ws) ws.close();
+            return;
+        }
+
         if (ws && ws.readyState === WebSocket.OPEN) {
-
-            // Проверка "живости" соединения
-            const now = Date.now();
-            const timeSinceLastPong = now - lastPongTimestamp;
-
-            if (timeSinceLastPong > 30000) {
-                console.warn('💀 No pong received for 30s, reconnecting...');
-                ws.close();
-                return;
-            }
-
             ws.send(JSON.stringify({ type: 'ping' }));
         }
-    }, 10_000); // каждые 10 сек
+    }, 15_000);
 }
 
 function stopHeartbeat() {
@@ -126,10 +115,6 @@ function stopHeartbeat() {
 
 // ─── Публичный API ────────────────────────────────────────────────────────────
 
-/**
- * Безопасная отправка сообщения.
- * Если соединение не готово — сообщение молча отбрасывается с предупреждением.
- */
 export function sendMessage(data) {
     if (!ws || ws.readyState !== WebSocket.OPEN) {
         console.warn('⚠️ WebSocket not ready, message not sent');
@@ -138,10 +123,6 @@ export function sendMessage(data) {
     ws.send(JSON.stringify(data));
 }
 
-/**
- * Инициализация соединения.
- * Проверяем оба «живых» состояния — CONNECTING и OPEN.
- */
 export function initWebSocket() {
     if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) {
         console.log('ℹ️ WebSocket already active');
@@ -150,26 +131,20 @@ export function initWebSocket() {
     connect();
 }
 
-/**
- * Ручное закрытие (при logout).
- */
 export function closeWebSocket() {
     console.log('🛑 Closing WebSocket manually');
 
-    // Отменяем запланированный реконнект, если есть
     if (reconnectTimeout) {
         clearTimeout(reconnectTimeout);
         reconnectTimeout = null;
     }
 
     stopHeartbeat();
-
-    // Сбрасываем счётчик попыток, чтобы следующая сессия начиналась с 1 секунды
     reconnectAttempts = 0;
 
     if (ws) {
-        ws.onclose = null; // отключаем авто-реконнект перед принудительным закрытием
-        ws.onerror = null; // убираем и onerror, чтобы не получить лишний лог после close
+        ws.onclose = null;
+        ws.onerror = null;
         ws.close();
         ws = null;
     }

@@ -9,10 +9,14 @@ from app.core.config import settings
 SQLALCHEMY_DATABASE_URL = settings.DATABASE_URI
 
 # Создаем "движок" (engine) — главную точку входа для SQLAlchemy
-# Если хочешь видеть в консоли все SQL-запросы, которые генерирует питон, поставь echo=True
+# Если хочешь видеть в консоли все SQL-запросы, которые генерирует питон, поставь echo=False
 engine = create_engine(
     SQLALCHEMY_DATABASE_URL,
-    echo=False
+    echo=False,
+    pool_size=10,         # базовое количество соединений в пуле
+    max_overflow=20,      # дополнительные соединения при пиковой нагрузке
+    pool_pre_ping=True,   # проверять живость соединения перед использованием (защита от обрывов)
+    pool_recycle=3600     # пересоздавать соединения старше 1 часа
 )
 
 # Создаем фабрику сессий (каждый запрос к API будет создавать новую сессию из этой фабрики)

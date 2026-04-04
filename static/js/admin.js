@@ -177,9 +177,11 @@ async function renderAdminEditor(eventId, isSilentUpdate = false) {
     const focusValue = isSilentUpdate ? document.activeElement?.value : null;
 
     try {
-        // Должности теперь глобальные — грузим из /admin/positions
+        // ОПТИМИЗАЦИЯ: Должности загружаем из кэша, если они уже есть
         const [positions, data] = await Promise.all([
-            api.get('/admin/positions'),
+            availablePositions.length > 0
+                ? Promise.resolve(availablePositions)
+                : api.get('/admin/positions'),
             api.get(`/admin/events/${eventId}/full`),
         ]);
 

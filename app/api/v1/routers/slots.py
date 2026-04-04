@@ -3,6 +3,8 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session, joinedload
 from typing import List
+from datetime import date as date_today
+from sqlalchemy import or_
 
 from app.db.database import get_db
 from app.models.user import User
@@ -23,23 +25,18 @@ def get_all_events(
     """
     Возвращает списки для заполнения выпадающих меню.
 
-    - Обычные пользователи (department): только НЕ-шаблоны, только активные.
-      Шаблоны им видеть не нужно — они работают только с рабочими списками.
+    - Обычные пользователи (department): только НЕ-шаблоны, только активные, и не в прошлом.
     - Администратор: все списки включая шаблоны (нужны для настройки редактора).
-
-    БАГ-ФИКс: раньше шаблоны попадали в список пользователей из управления,
-    они могли случайно открыть шаблон и начать вписывать туда людей.
     """
     query = db.query(Event)
 
     if current_user.role != "admin":
-        # Department видит только активированные рабочие списки.
-        # status="draft" — список ещё не готов, админ не выпустил его.
-        # status="active" — список активирован и готов к заполнению.
-        # Шаблоны (is_template=True) никогда не показываем управлениям.
+        today = date_today.today()
+        # Department видит только активированные рабочие списки, начиная с сегодняшнего дня.
         query = query.filter(
             Event.is_template == False,
             Event.status == "active",
+            or_(Event.date == None, Event.date >= today),  # ← скрывает прошлые
         )
 
     events = query.order_by(Event.date.asc().nullslast(), Event.id.desc()).all()
@@ -104,11 +101,15 @@ async def fill_slot(
     if not slot:
         raise HTTPException(status_code=404, detail="Строка не найдена")
 
-    if slot.department != current_user.username and current_user.role != "admin":
-        raise HTTPException(
-            status_code=403,
-            detail="Доступ запрещён. Это не ваша строка.",
-        )
+    # ПРОВЕРКА ПРАВ:
+    # Администратор может редактировать всё.
+    # Управление (department) может редактировать только слоты, явно назначенные ему.
+    if current_user.role != "admin":
+        if not slot.department or slot.department != current_user.username:
+            raise HTTPException(
+                status_code=403,
+                detail="Доступ запрещён. Это не ваша строка.",
+            )
 
     # ПРОВЕРКА ВЕРСИИ
     if slot.version != slot_in.version:

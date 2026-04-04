@@ -42,6 +42,7 @@ class DutySchedule(Base):
     # Кэшированное имя должности — сохраняется на момент создания/изменения
     # и используется как fallback если должность была удалена.
     position_name = Column(String, nullable=True)
+    owner = Column(String, nullable=True, index=True)
 
     created_at = Column(
         DateTime(timezone=True),
