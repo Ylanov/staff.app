@@ -1448,13 +1448,25 @@ tbody tr.group-header td {
 
 /* ─── Вкладка «База людей» ────────────────────────────────── */
 
+/* Добавить в style.css в секцию про persons */
 .persons-panel {
-    background: var(--md-surface);
-    border-radius: var(--md-radius-lg);
-    border: 1px solid var(--md-outline-variant);
-    box-shadow: 0 1px 4px rgba(0,0,0,0.04);
-    overflow: hidden;
+    display: flex;
+    flex-direction: column;
 }
+
+#persons-add-form {
+    flex-wrap: wrap;
+    gap: 12px;
+    align-items: flex-end;
+    padding: 14px 20px;
+    background: var(--md-surface-variant, #f5f5f0);
+    border-bottom: 1px solid var(--md-outline-variant);
+}
+
+#persons-add-form.hidden {
+    display: none !important;
+}
+
 
 .persons-panel__toolbar {
     display: flex;

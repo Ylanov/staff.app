@@ -4,14 +4,21 @@
 
 GET /admin/dashboard/today    — сводка на сегодня (или указанную дату)
 GET /admin/dashboard/calendar — события за диапазон дат (для мини-календаря)
+
+ИСПРАВЛЕНИЕ N+1:
+  Был: selectinload(Group.slots) без загрузки Position.
+       В build_event_summary каждый slot.position.name вызывал отдельный SELECT.
+       При 100 пустых слотах = 100 лишних запросов.
+  Стал: selectinload(Group.slots).joinedload(Slot.position)
+        Position загружается одним JOIN в том же запросе — 0 дополнительных SELECT.
 """
 
-from datetime import date as date_type, timedelta
-from typing import List, Optional
+from datetime import date as date_type
+from typing import Optional
 
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy import func
-from sqlalchemy.orm import Session, selectinload
+from sqlalchemy.orm import Session, selectinload, joinedload
 
 from app.db.database import get_db
 from app.models.user import User
@@ -52,7 +59,7 @@ def get_dashboard(
               "filled": 3,
               "empty": 1,
               "fill_pct": 75,
-              "empty_persons": ["— звание ФИО (должность)", ...]
+              "empty_positions": ["— звание ФИО (должность)", ...]
             }
           ]
         }
@@ -60,23 +67,27 @@ def get_dashboard(
       "total_slots": 30,
       "filled_slots": 22,
       "fill_pct": 73,
-      "events_without_date": [ ... ]  — списки без даты (активные)
+      "events_without_date": [ ... ]
     }
     """
     if target_date is None:
         target_date = date_type.today()
 
+    # ── Опции загрузки: Position джойним чтобы не делать N+1 ─────────────────
+    load_options = (
+        selectinload(Event.groups)
+        .selectinload(Group.slots)
+        .joinedload(Slot.position)   # ← ИСПРАВЛЕНИЕ: убирает N+1 при slot.position.name
+    )
+
     # Все активные НЕ-шаблонные списки за дату
     events_on_date = (
         db.query(Event)
         .filter(
-            Event.date == target_date,
+            Event.date        == target_date,
             Event.is_template == False,
         )
-        .options(
-            selectinload(Event.groups)
-            .selectinload(Group.slots)
-        )
+        .options(load_options)
         .order_by(Event.id)
         .all()
     )
@@ -85,14 +96,11 @@ def get_dashboard(
     events_no_date = (
         db.query(Event)
         .filter(
-            Event.date == None,
+            Event.date        == None,
             Event.is_template == False,
-            Event.status == "active",
+            Event.status      == "active",
         )
-        .options(
-            selectinload(Event.groups)
-            .selectinload(Group.slots)
-        )
+        .options(load_options)
         .order_by(Event.id)
         .all()
     )
@@ -102,9 +110,9 @@ def get_dashboard(
         for group in event.groups:
             all_slots.extend(group.slots)
 
-        total = len(all_slots)
+        total  = len(all_slots)
         filled = sum(1 for s in all_slots if s.full_name and s.full_name.strip())
-        empty = total - filled
+        empty  = total - filled
 
         # Группировка по управлению
         dept_map: dict = {}
@@ -116,7 +124,7 @@ def get_dashboard(
             if slot.full_name and slot.full_name.strip():
                 dept_map[dept]["filled"] += 1
             else:
-                # Формируем подсказку о пустом слоте
+                # slot.position уже загружен joinedload — дополнительного SELECT нет
                 pos_name = slot.position.name if slot.position else "?"
                 dept_map[dept]["empty_slots_info"].append(pos_name)
 
@@ -126,11 +134,11 @@ def get_dashboard(
             dept_filled = data["filled"]
             dept_empty  = dept_total - dept_filled
             departments.append({
-                "name":          dept_name,
-                "total":         dept_total,
-                "filled":        dept_filled,
-                "empty":         dept_empty,
-                "fill_pct":      round(dept_filled / dept_total * 100) if dept_total else 0,
+                "name":            dept_name,
+                "total":           dept_total,
+                "filled":          dept_filled,
+                "empty":           dept_empty,
+                "fill_pct":        round(dept_filled / dept_total * 100) if dept_total else 0,
                 "empty_positions": data["empty_slots_info"][:5],  # максимум 5 для UI
             })
 
@@ -146,12 +154,12 @@ def get_dashboard(
             "departments":  departments,
         }
 
-    events_summary = [build_event_summary(e) for e in events_on_date]
-    no_date_summary = [build_event_summary(e) for e in events_no_date]
+    events_summary    = [build_event_summary(e) for e in events_on_date]
+    no_date_summary   = [build_event_summary(e) for e in events_no_date]
 
     all_for_total = events_summary
-    total_slots  = sum(e["total_slots"]  for e in all_for_total)
-    filled_slots = sum(e["filled_slots"] for e in all_for_total)
+    total_slots   = sum(e["total_slots"]  for e in all_for_total)
+    filled_slots  = sum(e["filled_slots"] for e in all_for_total)
 
     return {
         "date":                target_date.isoformat(),
@@ -177,18 +185,19 @@ def get_calendar_dots(
     Возвращает список дат в месяце у которых есть активные списки.
     Используется для рисования точек на мини-календаре.
 
-    Ответ: { "dates": ["2026-04-04", "2026-04-05", ...] }
+    Оптимально: делает один агрегирующий GROUP BY запрос,
+    не загружает сами события в память.
     """
     from calendar import monthrange
-    _, days = monthrange(year, month)
+    _, days  = monthrange(year, month)
     date_from = date_type(year, month, 1)
     date_to   = date_type(year, month, days)
 
     rows = (
         db.query(Event.date, func.count(Event.id).label("cnt"))
         .filter(
-            Event.date >= date_from,
-            Event.date <= date_to,
+            Event.date        >= date_from,
+            Event.date        <= date_to,
             Event.is_template == False,
         )
         .group_by(Event.date)

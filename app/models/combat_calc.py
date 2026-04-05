@@ -2,13 +2,22 @@
 """
 Боевой расчёт — система заполнения документов с фиксированной структурой.
 
-CombatCalcTemplate  — шаблон документа (структура строк в JSON)
-CombatCalcInstance  — экземпляр на конкретную дату
-CombatCalcSlot      — заполняемая ячейка (ФИО + звание от управления)
+ИСПРАВЛЕНИЯ (индексы):
+  CombatCalcInstance.calc_date  — добавлен index=True
+    (частый фильтр: GET /combat/instances?date=YYYY-MM-DD)
+
+  CombatCalcSlot.instance_id    — добавлен index=True
+    (FK, каждый запрос слотов фильтрует по instance_id)
+
+  CombatCalcSlot.row_key        — добавлен index=True
+    (используется в _sync_slots и при построении slots_map)
+
+  Добавлен составной индекс (instance_id, row_key) через __table_args__
+    для быстрого поиска конкретной строки внутри экземпляра.
 """
 
 import json
-from sqlalchemy import Column, Integer, String, Date, Text, Boolean, ForeignKey, UniqueConstraint
+from sqlalchemy import Column, Integer, String, Date, Text, Boolean, ForeignKey, UniqueConstraint, Index
 from sqlalchemy.orm import relationship
 from app.db.database import Base
 
@@ -17,6 +26,7 @@ class CombatCalcTemplate(Base):
     """
     Шаблон боевого расчёта.
     structure_json — JSON со списком секций и строк.
+
     Структура:
     {
       "sections": [
@@ -46,8 +56,11 @@ class CombatCalcTemplate(Base):
     structure_json = Column(Text, nullable=False, default="{}")
     is_active      = Column(Boolean, default=True, nullable=False)
 
-    instances = relationship("CombatCalcInstance", back_populates="template",
-                             cascade="all, delete-orphan")
+    instances = relationship(
+        "CombatCalcInstance",
+        back_populates="template",
+        cascade="all, delete-orphan",
+    )
 
     def get_structure(self) -> dict:
         try:
@@ -64,17 +77,26 @@ class CombatCalcInstance(Base):
     __tablename__ = "combat_calc_instances"
 
     id          = Column(Integer, primary_key=True, index=True)
-    template_id = Column(Integer, ForeignKey("combat_calc_templates.id", ondelete="CASCADE"),
-                         nullable=False)
-    calc_date   = Column(Date, nullable=False)
-    status      = Column(String, default="active", nullable=False)  # draft / active / closed
+    template_id = Column(
+        Integer,
+        ForeignKey("combat_calc_templates.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,   # ← FK всегда должен иметь индекс
+    )
+    calc_date   = Column(Date, nullable=False, index=True)   # ← ИСПРАВЛЕНО: добавлен index
+    status      = Column(String, default="active", nullable=False)
 
     template = relationship("CombatCalcTemplate", back_populates="instances")
-    slots    = relationship("CombatCalcSlot", back_populates="instance",
-                            cascade="all, delete-orphan")
+    slots    = relationship(
+        "CombatCalcSlot",
+        back_populates="instance",
+        cascade="all, delete-orphan",
+        lazy="selectin",   # загружаем слоты вместе с экземпляром одним SELECT IN
+    )
 
     __table_args__ = (
         UniqueConstraint("template_id", "calc_date", name="uq_combat_calc_instance"),
+        Index("ix_combat_calc_instances_date_status", "calc_date", "status"),  # ← для фильтра по дате+статусу
     )
 
 
@@ -86,11 +108,15 @@ class CombatCalcSlot(Base):
     __tablename__ = "combat_calc_slots"
 
     id          = Column(Integer, primary_key=True, index=True)
-    instance_id = Column(Integer, ForeignKey("combat_calc_instances.id", ondelete="CASCADE"),
-                         nullable=False)
-    row_key     = Column(String, nullable=False)   # совпадает с key в структуре шаблона
-    slot_index  = Column(Integer, default=0, nullable=False)  # порядковый индекс в строке
-    department  = Column(String, nullable=True)    # какое управление заполняет
+    instance_id = Column(
+        Integer,
+        ForeignKey("combat_calc_instances.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,   # ← ИСПРАВЛЕНО: добавлен index (FK без индекса = full scan при каждом запросе)
+    )
+    row_key     = Column(String, nullable=False, index=True)   # ← ИСПРАВЛЕНО: добавлен index
+    slot_index  = Column(Integer, default=0, nullable=False)
+    department  = Column(String, nullable=True)
     full_name   = Column(String, nullable=True)
     rank        = Column(String, nullable=True)
     note        = Column(String, nullable=True)
@@ -99,6 +125,10 @@ class CombatCalcSlot(Base):
     instance = relationship("CombatCalcInstance", back_populates="slots")
 
     __table_args__ = (
-        UniqueConstraint("instance_id", "row_key", "slot_index",
-                         name="uq_combat_calc_slot"),
+        UniqueConstraint(
+            "instance_id", "row_key", "slot_index",
+            name="uq_combat_calc_slot",
+        ),
+        # Составной индекс для быстрого поиска всех слотов строки внутри экземпляра
+        Index("ix_combat_calc_slots_instance_row", "instance_id", "row_key"),  # ← НОВЫЙ
     )

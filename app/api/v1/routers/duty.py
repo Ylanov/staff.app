@@ -2,16 +2,30 @@
 """
 Роутер для графиков наряда.
 
+ИСПРАВЛЕНИЕ: Лишний запрос Position в diagnose_schedule.
+
+Проблема (старый код):
+    schedule = db.query(DutySchedule).filter(...)  # загружает со связями
+    ...
+    if schedule.position_id:
+        pos = db.query(Position).filter(Position.id == schedule.position_id).first()  # ← ЛИШНИЙ запрос
+
+DutySchedule модель имеет relationship на Position с lazy="joined",
+значит schedule.position уже загружен вместе с schedule первым запросом.
+Отдельный db.query(Position) был полностью лишним.
+
+Решение: заменить на schedule.position — данные уже в памяти, SQL нет.
+
 Маршруты:
-  GET    /admin/schedules                              – список графиков
-  POST   /admin/schedules                              – создать график
-  DELETE /admin/schedules/{id}                         – удалить график
-  GET    /admin/schedules/{id}/persons                 – люди в графике
-  POST   /admin/schedules/{id}/persons                 – добавить человека
-  DELETE /admin/schedules/{id}/persons/{person_id}     – убрать человека
-  GET    /admin/schedules/{id}/marks?year=&month=      – метки за месяц
-  POST   /admin/schedules/{id}/marks                   – поставить/снять + автозаполнение
-  GET    /admin/schedules/{id}/diagnose?date=YYYY-MM-DD – диагностика совпадений
+  GET    /admin/schedules
+  POST   /admin/schedules
+  DELETE /admin/schedules/{id}
+  GET    /admin/schedules/{id}/persons
+  POST   /admin/schedules/{id}/persons
+  DELETE /admin/schedules/{id}/persons/{person_id}
+  GET    /admin/schedules/{id}/marks?year=&month=
+  POST   /admin/schedules/{id}/marks
+  GET    /admin/schedules/{id}/diagnose?date=YYYY-MM-DD
 """
 
 import logging
@@ -35,7 +49,7 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
-# ─── Schemas ──────────────────────────────────────────────────────────────────
+# ─── Схемы ────────────────────────────────────────────────────────────────────
 
 class ScheduleCreate(BaseModel):
     title:         str           = Field(..., min_length=1, max_length=300, strip_whitespace=True)
@@ -55,10 +69,10 @@ class ScheduleResponse(BaseModel):
 
 class PersonInScheduleResponse(BaseModel):
     schedule_person_id: int
-    person_id:   int
-    full_name:   str
-    rank:        Optional[str]
-    order_num:   int
+    person_id:          int
+    full_name:          str
+    rank:               Optional[str]
+    order_num:          int
 
     class Config:
         from_attributes = True
@@ -69,8 +83,8 @@ class AddPersonPayload(BaseModel):
 
 
 class MarkPayload(BaseModel):
-    person_id:  int
-    duty_date:  date_type
+    person_id: int
+    duty_date: date_type
 
 
 # ─── Schedules CRUD ───────────────────────────────────────────────────────────
@@ -83,6 +97,7 @@ def list_schedules(
     rows = db.query(DutySchedule).order_by(DutySchedule.id.desc()).all()
     result = []
     for s in rows:
+        # position уже загружен через lazy="joined" в модели
         pos_name = s.position_name
         if not pos_name and s.position:
             pos_name = s.position.name
@@ -112,7 +127,7 @@ async def create_schedule(
     db.add(s)
     db.commit()
     db.refresh(s)
-    logger.debug(f"Created schedule id={s.id} title='{s.title}' position_id={s.position_id} position_name={s.position_name}")
+    logger.debug(f"Created schedule id={s.id} title='{s.title}' position_id={s.position_id}")
     return ScheduleResponse(
         id=s.id, title=s.title,
         position_id=s.position_id, position_name=s.position_name,
@@ -134,28 +149,27 @@ async def delete_schedule(
 
 # ─── Persons in schedule ──────────────────────────────────────────────────────
 
-@router.get("/schedules/{schedule_id}/persons", response_model=List[PersonInScheduleResponse])
-def list_schedule_persons(
+@router.get("/schedules/{schedule_id}/persons")
+def get_persons_in_schedule(
     schedule_id: int,
-    db:    Session = Depends(get_db),
-    admin: User    = Depends(get_current_active_admin),
+    db:          Session = Depends(get_db),
+    admin:       User    = Depends(get_current_active_admin),
 ):
-    rows = (
+    sps = (
         db.query(DutySchedulePerson)
-        .options(joinedload(DutySchedulePerson.person))
         .filter(DutySchedulePerson.schedule_id == schedule_id)
         .order_by(DutySchedulePerson.order_num, DutySchedulePerson.id)
         .all()
     )
     return [
-        PersonInScheduleResponse(
-            schedule_person_id=r.id,
-            person_id=r.person_id,
-            full_name=r.person.full_name,
-            rank=r.person.rank,
-            order_num=r.order_num,
-        )
-        for r in rows
+        {
+            "schedule_person_id": sp.id,
+            "person_id":   sp.person_id,
+            "full_name":   sp.person.full_name,
+            "rank":        sp.person.rank,
+            "order_num":   sp.order_num,
+        }
+        for sp in sps
     ]
 
 
@@ -166,14 +180,15 @@ async def add_person_to_schedule(
     db:          Session = Depends(get_db),
     admin:       User    = Depends(get_current_active_admin),
 ):
-    s = db.query(DutySchedule).filter(DutySchedule.id == schedule_id).first()
-    if not s:
+    schedule = db.query(DutySchedule).filter(DutySchedule.id == schedule_id).first()
+    if not schedule:
         raise HTTPException(status_code=404, detail="График не найден")
 
     person = db.query(Person).filter(Person.id == payload.person_id).first()
     if not person:
         raise HTTPException(status_code=404, detail="Человек не найден")
 
+    # Проверяем что человек ещё не в графике
     existing = db.query(DutySchedulePerson).filter(
         DutySchedulePerson.schedule_id == schedule_id,
         DutySchedulePerson.person_id   == payload.person_id,
@@ -257,7 +272,7 @@ async def toggle_mark(
     Поставить или снять отметку наряда.
     При постановке — автозаполняет слоты в списках за эту дату
     где position_id совпадает с должностью графика.
-    Использует joinedload для избежания проблемы N+1 запросов к БД.
+    Использует joinedload для избежания N+1.
     """
     schedule = db.query(DutySchedule).filter(DutySchedule.id == schedule_id).first()
     if not schedule:
@@ -295,9 +310,9 @@ async def toggle_mark(
     fill_log           = []
 
     if not schedule.position_id:
-        logger.warning(f"schedule.position_id is None — автозаполнение пропущено")
+        logger.warning("schedule.position_id is None — автозаполнение пропущено")
     else:
-        # Ищем все НЕ-шаблонные списки за эту дату + загружаем группы и слоты ОДНИМ запросом (N+1 Fix)
+        # Загружаем группы и слоты ОДНИМ запросом (N+1 Fix)
         events_on_date = (
             db.query(Event)
             .options(joinedload(Event.groups).joinedload(Group.slots))
@@ -312,9 +327,11 @@ async def toggle_mark(
 
         if not events_on_date:
             nearby = db.execute(
-                text("SELECT id, title, date, is_template FROM events "
-                     "WHERE date IS NOT NULL AND is_template = false "
-                     "ORDER BY ABS(date - :d) LIMIT 5"),
+                text(
+                    "SELECT id, title, date FROM events "
+                    "WHERE date IS NOT NULL AND is_template = false "
+                    "ORDER BY ABS(date - :d) LIMIT 5"
+                ),
                 {"d": payload.duty_date}
             ).fetchall()
             logger.warning(f"Нет списков на {payload.duty_date}. Ближайшие: {nearby}")
@@ -336,9 +353,8 @@ async def toggle_mark(
                                 "old_name":    old_name,
                                 "new_name":    person.full_name,
                             })
-                            logger.debug(f"Заполнено: '{old_name}' → '{person.full_name}' (slot_id={slot.id})")
 
-    logger.debug(f"Итого заполнено событий: {len(affected_event_ids)}, слотов: {len(fill_log)}")
+    logger.debug(f"Заполнено событий: {len(affected_event_ids)}, слотов: {len(fill_log)}")
     db.commit()
 
     # Рассылаем WebSocket-уведомления
@@ -353,7 +369,7 @@ async def toggle_mark(
         "debug": {
             "schedule_position_id": schedule.position_id,
             "duty_date":            payload.duty_date.isoformat(),
-        }
+        },
     }
 
 
@@ -369,10 +385,19 @@ def diagnose_schedule(
     """
     Диагностический эндпоинт: показывает почему автозаполнение
     сработало или не сработало для заданной даты.
-    Также оптимизирован с помощью joinedload.
+
+    ИСПРАВЛЕНО: убран лишний запрос к таблице positions.
+
+    Старый код делал:
+        schedule = db.query(DutySchedule)...  # загружает с position (lazy="joined")
+        pos = db.query(Position).filter(Position.id == schedule.position_id).first()  # ← ЛИШНИЙ
+
+    DutySchedule.position загружается автоматически через lazy="joined" в модели.
+    Достаточно обратиться к schedule.position — данные уже в памяти, SQL не нужен.
     """
     from datetime import date as date_type_cls
 
+    # position загружается автоматически (lazy="joined" в DutySchedule)
     schedule = db.query(DutySchedule).filter(DutySchedule.id == schedule_id).first()
     if not schedule:
         raise HTTPException(status_code=404, detail="График не найден")
@@ -382,7 +407,6 @@ def diagnose_schedule(
     except ValueError:
         raise HTTPException(status_code=400, detail="Формат даты: YYYY-MM-DD")
 
-    # Оптимизированный запрос со связями
     events = (
         db.query(Event)
         .options(joinedload(Event.groups).joinedload(Group.slots).joinedload(Slot.position))
@@ -396,11 +420,11 @@ def diagnose_schedule(
         for group in event.groups:
             slots_info = [
                 {
-                    "slot_id":            s.id,
-                    "position_id":        s.position_id,
-                    "position_name":      s.position.name if s.position else None,
-                    "full_name":          s.full_name,
-                    "matches_schedule":   s.position_id == schedule.position_id,
+                    "slot_id":          s.id,
+                    "position_id":      s.position_id,
+                    "position_name":    s.position.name if s.position else None,
+                    "full_name":        s.full_name,
+                    "matches_schedule": s.position_id == schedule.position_id,
                 }
                 for s in group.slots
             ]
@@ -410,16 +434,20 @@ def diagnose_schedule(
                 "slots":      slots_info,
             })
         events_info.append({
-            "event_id":   event.id,
+            "event_id":    event.id,
             "event_title": event.title,
-            "event_date": event.date.isoformat() if event.date else None,
-            "groups":     groups_info,
+            "event_date":  event.date.isoformat() if event.date else None,
+            "groups":      groups_info,
         })
 
+    # ИСПРАВЛЕНО: используем schedule.position вместо отдельного db.query(Position)
+    # position уже загружен вместе с schedule через lazy="joined"
     position = None
-    if schedule.position_id:
-        pos = db.query(Position).filter(Position.id == schedule.position_id).first()
-        position = {"id": pos.id, "name": pos.name} if pos else None
+    if schedule.position:
+        position = {
+            "id":   schedule.position.id,
+            "name": schedule.position.name,
+        }
 
     return {
         "schedule": {
@@ -428,14 +456,16 @@ def diagnose_schedule(
             "position_id":   schedule.position_id,
             "position_name": schedule.position_name,
         },
-        "position_in_db":     position,
-        "check_date":         check_date.isoformat(),
-        "events_found":       len(events),
-        "events":             events_info,
-        "will_autofill":      schedule.position_id is not None and len(events) > 0,
+        "position_in_db": position,
+        "check_date":     check_date.isoformat(),
+        "events_found":   len(events),
+        "events":         events_info,
+        "will_autofill":  schedule.position_id is not None and len(events) > 0,
         "diagnosis": (
-            "OK: позиция привязана и есть списки на эту дату" if schedule.position_id and events
-            else "⚠️ График создан без привязки к должности — автозаполнение невозможно" if not schedule.position_id
+            "OK: позиция привязана и есть списки на эту дату"
+            if schedule.position_id and events
+            else "⚠️ График создан без привязки к должности — автозаполнение невозможно"
+            if not schedule.position_id
             else f"⚠️ Нет списков на дату {check_date} — создайте список с этой датой"
         ),
     }

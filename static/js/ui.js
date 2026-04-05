@@ -469,25 +469,63 @@ export function initPersonsTab() {
     // Импорт Excel
     const importBtn   = document.getElementById('persons-import-btn');
     const importInput = document.getElementById('persons-import-input');
+    const templateBtn = document.getElementById('persons-template-btn');   // ← новая кнопка
+
+    // Скачать шаблон
+    // ✅ СТАЛО — используем api.download() который уже добавляет Authorization: Bearer
+    if (templateBtn) {
+        templateBtn.addEventListener('click', async () => {
+            try {
+                const blob = await api.download('/persons/import/template');
+                const url  = URL.createObjectURL(blob);
+                const a    = document.createElement('a');
+                a.href     = url;
+                a.download = 'persons_template.xlsx';
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                URL.revokeObjectURL(url);
+            } catch (err) {
+                window.showSnackbar?.('Не удалось скачать шаблон', 'error');
+            }
+        });
+    }
+
     if (importBtn && importInput) {
         importBtn.addEventListener('click', () => importInput.click());
+
         importInput.addEventListener('change', async (e) => {
             const file = e.target.files[0];
             if (!file) return;
+
             if (!file.name.endsWith('.xlsx') && !file.name.endsWith('.xls')) {
                 window.showSnackbar?.('Пожалуйста, выберите файл .xlsx', 'error');
                 importInput.value = '';
                 return;
             }
+
             const formData = new FormData();
             formData.append('file', file);
+
             const orig = importBtn.innerHTML;
             importBtn.innerHTML = '⏳ Загрузка...';
             importBtn.disabled  = true;
+
             try {
                 const res = await api.upload('/persons/import', formData);
+
+                // Обновляем таблицу
                 await loadPersons(document.getElementById('persons-search')?.value?.trim() || '');
-                window.showSnackbar?.(`Готово! Добавлено: ${res.added}, Обновлено: ${res.updated}`, 'success', 6000);
+
+                // Основное уведомление
+                const mainMsg = `✅ Добавлено: ${res.added} | Обновлено: ${res.updated} | Пропущено: ${res.skipped}`;
+                window.showSnackbar?.(mainMsg, 'success', 8000);
+
+                // Если есть ошибки — показываем модальное окно с детализацией
+                if (res.errors && res.errors.length > 0) {
+                    showImportErrorsModal(res.errors, res);
+                }
+
             } catch (err) {
                 window.showSnackbar?.(err.message || 'Ошибка при импорте файла', 'error');
             } finally {
@@ -559,6 +597,85 @@ export function initPersonsTab() {
         if (delBtn)     deletePerson(parseInt(delBtn.dataset.personId));
         if (saveEdit)   saveEditRow(parseInt(saveEdit.dataset.personId));
         if (cancelEdit) cancelEditRow();
+    });
+}
+
+// ─── Модальное окно с ошибками импорта ───────────────────────────────────────
+
+function showImportErrorsModal(errors, result) {
+    // Удаляем предыдущий модал если был
+    document.getElementById('import-errors-modal')?.remove();
+
+    const modal = document.createElement('div');
+    modal.id = 'import-errors-modal';
+    modal.style.cssText = `
+        position: fixed; inset: 0; z-index: 9999;
+        background: rgba(0,0,0,.45);
+        display: flex; align-items: center; justify-content: center;
+        padding: 16px;
+    `;
+
+    const errorsHtml = errors.map(e =>
+        `<div style="padding:6px 10px; border-left:3px solid var(--md-error,#E24B4A);
+                     margin-bottom:6px; background:var(--md-surface-variant);
+                     border-radius:0 4px 4px 0; font-size:0.83rem; color:var(--md-on-surface);">
+            <strong>Стр. ${e.row}:</strong> ${e.message}
+         </div>`
+    ).join('');
+
+    modal.innerHTML = `
+        <div style="background:var(--md-surface); border-radius:var(--md-radius-lg,12px);
+                    box-shadow:0 8px 32px rgba(0,0,0,.25); max-width:560px; width:100%;
+                    max-height:80vh; display:flex; flex-direction:column; overflow:hidden;">
+            <div style="padding:18px 20px; border-bottom:1px solid var(--md-outline-variant);
+                        display:flex; align-items:center; gap:10px;">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none"
+                     stroke="var(--md-error,#E24B4A)" stroke-width="2.2"
+                     stroke-linecap="round" stroke-linejoin="round">
+                    <circle cx="12" cy="12" r="10"/>
+                    <line x1="12" y1="8" x2="12" y2="12"/>
+                    <line x1="12" y1="16" x2="12.01" y2="16"/>
+                </svg>
+                <span style="font-weight:600; font-size:1rem; color:var(--md-on-surface);">
+                    Импорт завершён с замечаниями
+                </span>
+            </div>
+            <div style="padding:14px 20px; display:flex; gap:20px; font-size:0.85rem;
+                        background:var(--md-surface-container,#f5f5f5);
+                        border-bottom:1px solid var(--md-outline-variant);">
+                <span>✅ Добавлено: <strong>${result.added}</strong></span>
+                <span>🔄 Обновлено: <strong>${result.updated}</strong></span>
+                <span>⏭ Пропущено: <strong>${result.skipped}</strong></span>
+                <span style="color:var(--md-error,#E24B4A);">⚠ Ошибок: <strong>${errors.length}</strong></span>
+            </div>
+            <div style="overflow-y:auto; flex:1; padding:14px 20px;">
+                <p style="font-size:0.82rem; color:var(--md-on-surface-hint); margin-bottom:10px;">
+                    Следующие строки не были импортированы:
+                </p>
+                ${errorsHtml}
+            </div>
+            <div style="padding:14px 20px; border-top:1px solid var(--md-outline-variant);
+                        display:flex; justify-content:flex-end; gap:8px;">
+                <button id="import-errors-copy" class="btn btn-outlined btn-sm" type="button">
+                    📋 Скопировать список ошибок
+                </button>
+                <button id="import-errors-close" class="btn btn-primary btn-sm" type="button">
+                    Закрыть
+                </button>
+            </div>
+        </div>
+    `;
+
+    document.body.appendChild(modal);
+
+    modal.querySelector('#import-errors-close').addEventListener('click', () => modal.remove());
+    modal.addEventListener('click', (e) => { if (e.target === modal) modal.remove(); });
+
+    modal.querySelector('#import-errors-copy').addEventListener('click', () => {
+        const text = errors.map(e => `Строка ${e.row}: ${e.message}`).join('\n');
+        navigator.clipboard.writeText(text).then(() => {
+            window.showSnackbar?.('Скопировано в буфер обмена', 'success');
+        });
     });
 }
 

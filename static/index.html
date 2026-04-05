@@ -10,346 +10,6 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@300;400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
 
-    <!-- ═══════════════════════════════════════════════
-         СТИЛИ ДАШБОРДА
-         ═══════════════════════════════════════════════ -->
-    <style>
-    /* ── Layout ──────────────────────────────────────────────────────────── */
-    .db-layout {
-        display: grid;
-        grid-template-columns: 240px 1fr;
-        gap: 24px;
-        align-items: start;
-        padding-top: 8px;
-    }
-    @media (max-width: 720px) {
-        .db-layout { grid-template-columns: 1fr; }
-    }
-
-    /* ── Sidebar ─────────────────────────────────────────────────────────── */
-    .db-sidebar {
-        position: sticky;
-        top: 16px;
-        display: flex;
-        flex-direction: column;
-        gap: 16px;
-    }
-
-    /* ── Calendar ────────────────────────────────────────────────────────── */
-    .db-cal {
-        background: var(--md-surface, var(--color-background-secondary));
-        border: 1px solid var(--md-outline-variant, var(--color-border-tertiary));
-        border-radius: 12px;
-        padding: 14px;
-    }
-    .db-cal__nav {
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        margin-bottom: 10px;
-    }
-    .db-cal__label {
-        font-size: 0.85rem;
-        font-weight: 500;
-        color: var(--md-on-surface, var(--color-text-primary));
-    }
-    .db-cal__grid {
-        display: grid;
-        grid-template-columns: repeat(7, 1fr);
-        gap: 2px;
-    }
-    .db-cal__dow {
-        font-size: 0.65rem;
-        font-weight: 500;
-        color: var(--md-on-surface-hint, var(--color-text-tertiary));
-        text-align: center;
-        padding: 2px 0 4px;
-    }
-    .db-cal__day {
-        position: relative;
-        aspect-ratio: 1;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        font-size: 0.75rem;
-        border-radius: 6px;
-        cursor: pointer;
-        color: var(--md-on-surface, var(--color-text-primary));
-        transition: background .12s;
-        user-select: none;
-    }
-    .db-cal__day:hover { background: var(--md-surface-container, var(--color-background-tertiary)); }
-    .db-cal__day--empty { cursor: default; }
-    .db-cal__day--weekend { color: var(--md-error, #E24B4A); }
-    .db-cal__day--today {
-        font-weight: 600;
-        background: var(--md-primary-light, #E6F1FB);
-        color: var(--md-primary, #185FA5);
-    }
-    .db-cal__day--sel {
-        background: var(--md-primary, #185FA5) !important;
-        color: #fff !important;
-        font-weight: 600;
-    }
-    .db-cal__dot {
-        position: absolute;
-        bottom: 2px;
-        left: 50%;
-        transform: translateX(-50%);
-        width: 4px;
-        height: 4px;
-        border-radius: 50%;
-        background: var(--md-primary, #185FA5);
-    }
-    .db-cal__day--sel .db-cal__dot { background: rgba(255,255,255,.7); }
-    .db-cal__dot--legend {
-        position: static;
-        transform: none;
-        display: inline-block;
-        width: 6px;
-        height: 6px;
-        flex-shrink: 0;
-    }
-
-    /* ── Legend ──────────────────────────────────────────────────────────── */
-    .db-legend {
-        display: flex;
-        flex-direction: column;
-        gap: 6px;
-        padding: 12px 14px;
-        background: var(--md-surface, var(--color-background-secondary));
-        border: 1px solid var(--md-outline-variant, var(--color-border-tertiary));
-        border-radius: 12px;
-        font-size: 0.75rem;
-        color: var(--md-on-surface-hint, var(--color-text-secondary));
-    }
-    .db-legend__item {
-        display: flex;
-        align-items: center;
-        gap: 8px;
-    }
-    .db-legend__dot {
-        width: 10px;
-        height: 10px;
-        border-radius: 50%;
-        flex-shrink: 0;
-    }
-
-    /* ── Header summary ──────────────────────────────────────────────────── */
-    .db-header {
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        flex-wrap: wrap;
-        gap: 12px;
-        margin-bottom: 20px;
-        padding: 16px 20px;
-        background: var(--md-surface, var(--color-background-secondary));
-        border: 1px solid var(--md-outline-variant, var(--color-border-tertiary));
-        border-radius: 12px;
-    }
-    .db-header__date {
-        font-size: 1.05rem;
-        font-weight: 600;
-        color: var(--md-on-surface, var(--color-text-primary));
-    }
-    .db-header__summary {
-        display: flex;
-        align-items: center;
-        gap: 20px;
-    }
-    .db-header__counts {
-        display: flex;
-        gap: 16px;
-    }
-    .db-header__count {
-        text-align: center;
-        line-height: 1.2;
-    }
-    .db-header__num {
-        display: block;
-        font-size: 1.4rem;
-        font-weight: 700;
-        color: var(--md-on-surface, var(--color-text-primary));
-    }
-    .db-header__sub {
-        font-size: 0.7rem;
-        color: var(--md-on-surface-hint, var(--color-text-tertiary));
-    }
-    .db-header__count--filled .db-header__num { color: var(--md-success, #1D9E75); }
-    .db-header__count--empty  .db-header__num { color: var(--md-error, #E24B4A); }
-
-    /* ── Ring ────────────────────────────────────────────────────────────── */
-    .db-ring {
-        position: relative;
-        width: 52px;
-        height: 52px;
-        flex-shrink: 0;
-    }
-    .db-ring__svg {
-        width: 52px;
-        height: 52px;
-        transform: rotate(-90deg);
-    }
-    .db-ring__bg {
-        fill: none;
-        stroke: var(--md-outline-variant, var(--color-border-tertiary));
-        stroke-width: 4;
-    }
-    .db-ring__fg {
-        fill: none;
-        stroke-width: 4;
-        stroke-linecap: round;
-        transition: stroke-dasharray .5s ease;
-    }
-    .db-ring__label {
-        position: absolute;
-        inset: 0;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        font-size: 0.7rem;
-        font-weight: 600;
-        color: var(--md-on-surface, var(--color-text-primary));
-    }
-
-    /* ── Event cards grid ────────────────────────────────────────────────── */
-    .db-events {
-        display: grid;
-        grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
-        gap: 12px;
-    }
-    .db-event-card {
-        background: var(--md-surface, var(--color-background-secondary));
-        border: 1px solid var(--md-outline-variant, var(--color-border-tertiary));
-        border-radius: 12px;
-        padding: 14px 16px;
-        cursor: pointer;
-        transition: border-color .15s, box-shadow .15s;
-    }
-    .db-event-card:hover {
-        border-color: var(--md-primary, #185FA5);
-        box-shadow: 0 2px 8px rgba(0,0,0,.07);
-    }
-    .db-event-card--skel { cursor: default; pointer-events: none; }
-
-    /* ── Event card internals ────────────────────────────────────────────── */
-    .db-event-card__top { margin-bottom: 10px; }
-    .db-event-card__title-row {
-        display: flex;
-        align-items: flex-start;
-        justify-content: space-between;
-        gap: 8px;
-        margin-bottom: 6px;
-    }
-    .db-event-card__title {
-        font-size: 0.85rem;
-        font-weight: 600;
-        color: var(--md-on-surface, var(--color-text-primary));
-        line-height: 1.3;
-    }
-    .db-event-card__progress-row {
-        display: flex;
-        align-items: center;
-        gap: 8px;
-    }
-    .db-event-card__bar {
-        flex: 1;
-        height: 6px;
-        background: var(--md-outline-variant, var(--color-border-tertiary));
-        border-radius: 3px;
-        overflow: hidden;
-    }
-    .db-event-card__bar-fill {
-        height: 100%;
-        border-radius: 3px;
-        transition: width .4s ease;
-    }
-    .db-event-card__pct {
-        font-size: 0.75rem;
-        font-weight: 600;
-        min-width: 30px;
-        text-align: right;
-    }
-    .db-event-card__counts {
-        font-size: 0.7rem;
-        color: var(--md-on-surface-hint, var(--color-text-tertiary));
-        white-space: nowrap;
-    }
-
-    /* ── Status badge ────────────────────────────────────────────────────── */
-    .db-status {
-        font-size: 0.65rem;
-        font-weight: 500;
-        padding: 2px 7px;
-        border-radius: 4px;
-        white-space: nowrap;
-        flex-shrink: 0;
-    }
-    .db-status--active { background: #E1F5EE; color: #0F6E56; }
-    .db-status--draft  { background: #F1EFE8; color: #5F5E5A; }
-
-    /* ── Departments ─────────────────────────────────────────────────────── */
-    .db-depts {
-        border-top: 1px solid var(--md-outline-variant, var(--color-border-tertiary));
-        padding-top: 10px;
-        display: flex;
-        flex-direction: column;
-        gap: 6px;
-    }
-    .db-dept__head {
-        display: flex;
-        justify-content: space-between;
-        margin-bottom: 3px;
-    }
-    .db-dept__name {
-        font-size: 0.75rem;
-        color: var(--md-on-surface-hint, var(--color-text-secondary));
-    }
-    .db-dept__nums {
-        font-size: 0.72rem;
-        font-weight: 500;
-        color: var(--md-on-surface, var(--color-text-primary));
-    }
-    .db-dept__bar {
-        height: 4px;
-        background: var(--md-outline-variant, var(--color-border-tertiary));
-        border-radius: 2px;
-        overflow: hidden;
-    }
-    .db-dept__bar-fill {
-        height: 100%;
-        border-radius: 2px;
-        transition: width .4s ease;
-    }
-
-    /* ── Empty / skeleton ────────────────────────────────────────────────── */
-    .db-empty {
-        text-align: center;
-        padding: 60px 24px;
-        color: var(--md-on-surface-hint, var(--color-text-tertiary));
-        display: flex;
-        flex-direction: column;
-        align-items: center;
-        gap: 12px;
-        font-size: 0.875rem;
-    }
-    .db-skeleton { display: flex; flex-direction: column; gap: 12px; }
-    .db-skel-row {
-        height: 14px;
-        background: var(--md-outline-variant, var(--color-border-tertiary));
-        border-radius: 7px;
-        opacity: .5;
-        animation: db-pulse 1.4s ease-in-out infinite;
-    }
-    .db-skel-row--wide  { height: 60px; border-radius: 12px; }
-    .db-skel-row--bar   { height: 6px; }
-    .db-skel-row--short { width: 60%; }
-    @keyframes db-pulse {
-        0%, 100% { opacity: .35; }
-        50%       { opacity: .6; }
-    }
-    </style>
 </head>
 <body>
 
@@ -433,22 +93,38 @@
     <!-- ─── Department View ────────────────────────────────────────────────── -->
     <div id="department-view" class="hidden">
         <div class="page">
-            <div class="dept-header" style="display: flex; justify-content: space-between; align-items: flex-end; flex-wrap: wrap; gap: 12px;">
+            <div class="dept-header" style="display:flex; justify-content:space-between; align-items:flex-end; flex-wrap:wrap; gap:12px;">
                 <div>
                     <h2 class="page-title">Мои задачи</h2>
                     <p class="dept-header__sub">Управление списками и нарядами</p>
                 </div>
-                <div style="display: flex; gap: 8px; margin-bottom: 8px; flex-wrap: wrap;">
+                <div style="display:flex; gap:8px; margin-bottom:8px; flex-wrap:wrap;">
                     <button id="dept-main-tab-btn" class="btn btn-filled btn-sm" type="button">
-                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right: 4px;"><path d="M12 5v14M5 12h14"/></svg>
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                             stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right:4px;">
+                            <path d="M12 5v14M5 12h14"/>
+                        </svg>
                         Списки
                     </button>
                     <button id="dept-duty-tab-btn" class="btn btn-outlined btn-sm" type="button">
-                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right: 4px;"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                             stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right:4px;">
+                            <rect x="3" y="4" width="18" height="18" rx="2" ry="2"/>
+                            <line x1="16" y1="2" x2="16" y2="6"/>
+                            <line x1="8"  y1="2" x2="8"  y2="6"/>
+                            <line x1="3"  y1="10" x2="21" y2="10"/>
+                        </svg>
                         Графики нарядов
                     </button>
                     <button id="cc-dept-tab-btn" class="btn btn-outlined btn-sm" type="button">
-                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right: 4px;"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line><polyline points="10 9 9 9 8 9"></polyline></svg>
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                             stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right:4px;">
+                            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+                            <polyline points="14 2 14 8 20 8"/>
+                            <line x1="16" y1="13" x2="8" y2="13"/>
+                            <line x1="16" y1="17" x2="8" y2="17"/>
+                            <polyline points="10 9 9 9 8 9"/>
+                        </svg>
                         Боевой расчёт
                     </button>
                 </div>
@@ -497,12 +173,13 @@
             </div>
 
             <!-- Зона: Графики нарядов управления -->
-            <div id="dept-duty-panel" class="hidden" style="margin-top: 24px;">
+            <div id="dept-duty-panel" class="hidden" style="margin-top:24px;">
                 <div class="duty-layout">
                     <!-- Левая панель -->
                     <aside class="duty-sidebar">
                         <div class="duty-sidebar__header">
-                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="white"
+                                 stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                                 <rect x="3" y="4" width="18" height="18" rx="2" ry="2"/>
                                 <line x1="16" y1="2" x2="16" y2="6"/>
                                 <line x1="8"  y1="2" x2="8"  y2="6"/>
@@ -528,7 +205,8 @@
                                 </div>
                             </div>
 
-                            <button id="dept-duty-add-schedule-btn" class="btn btn-success btn-sm" style="width:100%; margin-bottom:10px;" type="button">
+                            <button id="dept-duty-add-schedule-btn" class="btn btn-success btn-sm"
+                                    style="width:100%; margin-bottom:10px;" type="button">
                                 + Создать график
                             </button>
 
@@ -541,9 +219,12 @@
                     <!-- Правая панель: сетка -->
                     <div class="duty-grid-panel">
                         <div id="dept-duty-grid-empty" class="duty-grid-empty">
-                            <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="var(--md-on-surface-hint)" stroke-width="1.5">
+                            <svg width="48" height="48" viewBox="0 0 24 24" fill="none"
+                                 stroke="var(--md-on-surface-hint)" stroke-width="1.5">
                                 <rect x="3" y="4" width="18" height="18" rx="2" ry="2"/>
-                                <line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/>
+                                <line x1="16" y1="2" x2="16" y2="6"/>
+                                <line x1="8"  y1="2" x2="8"  y2="6"/>
+                                <line x1="3"  y1="10" x2="21" y2="10"/>
                             </svg>
                             <p>Выберите график из списка слева</p>
                         </div>
@@ -554,7 +235,7 @@
                                     <button id="dept-duty-prev-month"  class="btn btn-outlined btn-xs" type="button">←</button>
                                     <span   id="dept-duty-month-label" class="duty-month-label"></span>
                                     <button id="dept-duty-next-month"  class="btn btn-outlined btn-xs" type="button">→</button>
-                                    <button id="dept-duty-today-month" class="btn btn-text btn-xs" type="button">Сегодня</button>
+                                    <button id="dept-duty-today-month" class="btn btn-text btn-xs"     type="button">Сегодня</button>
                                 </div>
                                 <button id="dept-duty-add-person-btn" class="btn btn-outlined btn-sm" type="button">
                                     + Добавить человека
@@ -563,7 +244,9 @@
 
                             <!-- Поиск человека -->
                             <div id="dept-duty-person-search-wrap" class="duty-person-search hidden">
-                                <input type="text" id="dept-duty-person-search-input" placeholder="Поиск по ФИО…" autocomplete="off" class="duty-person-search__input">
+                                <input type="text" id="dept-duty-person-search-input"
+                                       placeholder="Поиск по ФИО…" autocomplete="off"
+                                       class="duty-person-search__input">
                                 <div id="dept-duty-person-results" class="duty-person-results"></div>
                             </div>
 
@@ -571,7 +254,7 @@
                                 <table id="dept-duty-grid-table" class="duty-grid"></table>
                             </div>
 
-                            <p class="duty-grid-hint" style="margin-top: 12px; font-size: 0.8rem; color: var(--md-on-surface-hint);">
+                            <p class="duty-grid-hint" style="margin-top:12px; font-size:0.8rem; color:var(--md-on-surface-hint);">
                                 Нажмите на клетку чтобы поставить / снять наряд. При постановке —
                                 ваши слоты в списках за эту дату заполнятся автоматически.
                             </p>
@@ -581,18 +264,22 @@
             </div>
 
             <!-- Зона Боевого расчёта (Для управлений) -->
-            <div id="dept-combat-calc" class="hidden" style="margin-top: 24px;">
+            <div id="dept-combat-calc" class="hidden" style="margin-top:24px;">
 
                 <!-- Раскрывающийся Тулбар -->
                 <div class="tools-bar">
                     <div class="tools-bar__buttons">
                         <button class="tool-trigger active" data-panel="cc-panel-calendar-dept" type="button">
-                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                 stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                                 <rect x="3" y="4" width="18" height="18" rx="2" ry="2"/>
-                                <line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/>
+                                <line x1="16" y1="2" x2="16" y2="6"/>
+                                <line x1="8"  y1="2" x2="8"  y2="6"/>
+                                <line x1="3"  y1="10" x2="21" y2="10"/>
                             </svg>
                             Календарь расчётов
-                            <svg class="tool-trigger__chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                            <svg class="tool-trigger__chevron" width="12" height="12" viewBox="0 0 24 24" fill="none"
+                                 stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
                                 <path d="M6 9l6 6 6-6"/>
                             </svg>
                         </button>
@@ -609,22 +296,26 @@
                                 <button id="cc-next-week-dept" class="btn btn-outlined btn-xs" type="button">След. →</button>
                             </div>
 
-                            <div id="cc-instances-list-dept" style="display: grid; grid-template-columns: repeat(7, minmax(140px, 1fr)); gap: 8px; overflow-x: auto; padding-bottom: 4px;">
-                                <p class="hint" style="grid-column: 1 / -1; text-align: center;">Загрузка...</p>
+                            <div id="cc-instances-list-dept" style="display:grid; grid-template-columns:repeat(7, minmax(140px, 1fr)); gap:8px; overflow-x:auto; padding-bottom:4px;">
+                                <p class="hint" style="grid-column:1 / -1; text-align:center;">Загрузка...</p>
                             </div>
                         </div>
                     </div>
                 </div>
 
                 <!-- Зона Редактора (внизу) -->
-                <div class="editor-panel" style="margin-top: 16px;">
+                <div class="editor-panel" style="margin-top:16px;">
                     <div id="cc-view-empty-dept" style="padding:48px 24px; text-align:center; color:var(--md-on-surface-hint);">
-                        <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" style="margin-bottom:12px;">
-                            <rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/>
+                        <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                             stroke-width="1.5" style="margin-bottom:12px;">
+                            <rect x="3" y="4" width="18" height="18" rx="2" ry="2"/>
+                            <line x1="16" y1="2" x2="16" y2="6"/>
+                            <line x1="8"  y1="2" x2="8"  y2="6"/>
+                            <line x1="3"  y1="10" x2="21" y2="10"/>
                         </svg>
                         <p style="font-size:.875rem;">Выберите расчёт на любой день из календаря сверху</p>
                     </div>
-                    <div id="cc-view-panel-dept" class="hidden" style="padding: 24px;"></div>
+                    <div id="cc-view-panel-dept" class="hidden" style="padding:24px;"></div>
                 </div>
 
             </div>
@@ -641,7 +332,6 @@
 
             <!-- ── Tab Bar ─────────────────────────────────────────────────── -->
             <nav class="tab-bar" role="tablist">
-                <!-- ДАШБОРД — первая вкладка, активная по умолчанию -->
                 <button class="tab-btn active"
                         role="tab" aria-selected="true" aria-controls="tab-dashboard" type="button">
                     Дашборд
@@ -669,7 +359,7 @@
             </nav>
 
             <!-- ══════════════════════════════════════════════════════════════
-                 Tab: Дашборд (ПЕРВЫЙ — главный экран)
+                 Tab: Дашборд
                  ══════════════════════════════════════════════════════════════ -->
             <div id="tab-dashboard" role="tabpanel">
                 <div class="db-layout">
@@ -727,7 +417,6 @@
                  ══════════════════════════════════════════════════════════════ -->
             <div id="tab-editor" class="hidden" role="tabpanel">
 
-                <!-- Toolbar с раскрывающимися панелями -->
                 <div class="tools-bar">
                     <div class="tools-bar__buttons">
 
@@ -810,8 +499,6 @@
 
                     </div>
 
-                    <!-- ── Раскрывающиеся панели ─────────────────────────── -->
-
                     <!-- Панель: Новый список -->
                     <div class="tools-panel" id="panel-new-list">
                         <div class="tools-panel__inner">
@@ -854,7 +541,6 @@
                     <div class="tools-panel" id="panel-positions">
                         <div class="tools-panel__inner">
                             <div class="tools-panel__row tools-panel__row--positions">
-
                                 <div style="display:flex; flex-direction:column; gap:8px; max-width:260px;">
                                     <div class="field">
                                         <label class="field-label" for="new-position-name">Новая должность</label>
@@ -864,11 +550,9 @@
                                         + Добавить
                                     </button>
                                 </div>
-
                                 <div id="positions-list" class="positions-list-inline">
                                     <p class="hint" style="font-size:0.75rem;">Загрузка...</p>
                                 </div>
-
                             </div>
                         </div>
                     </div>
@@ -876,7 +560,6 @@
                     <!-- Панель: Расписание -->
                     <div class="tools-panel" id="panel-schedule">
                         <div class="tools-panel__inner" style="padding-bottom:0;">
-
                             <div style="display:flex; justify-content:space-between; align-items:center;
                                         flex-wrap:wrap; gap:10px; margin-bottom:12px;">
                                 <div style="display:flex; gap:6px; align-items:center;">
@@ -890,14 +573,11 @@
                                     <button id="sched-generate-btn" class="btn btn-filled btn-sm"   type="button">▶ Создать списки</button>
                                 </div>
                             </div>
-
                             <div id="sched-grid" class="sched-grid"></div>
-
                             <p style="font-size:0.72rem; color:var(--md-on-surface-hint); padding:8px 0 12px; line-height:1.5;">
                                 Назначьте шаблон на каждый день и нажмите «Создать списки» — они появятся в редакторе автоматически.<br>
                                 Дни без шаблона пропускаются.
                             </p>
-
                         </div>
                     </div>
 
@@ -905,7 +585,6 @@
                     <div class="tools-panel" id="panel-export">
                         <div class="tools-panel__inner">
                             <div class="tools-panel__row" style="align-items:flex-end; flex-wrap:wrap; gap:14px;">
-
                                 <!-- Блок дежурного -->
                                 <div class="duty-block">
                                     <div class="duty-block__label">Дежурный (подпись в документе)</div>
@@ -934,7 +613,6 @@
                                 <button id="export-btn" class="btn btn-outlined btn-sm" type="button" style="flex-shrink:0;">
                                     ⬇ Скачать .docx
                                 </button>
-
                             </div>
                         </div>
                     </div>
@@ -966,7 +644,6 @@
                              padding:14px 18px; border-bottom:1px solid var(--md-outline-variant);">
                             <div style="display:flex; align-items:center; gap:12px; flex-wrap:wrap;">
                                 <strong id="editor-title" style="font-size:0.95rem;"></strong>
-
                                 <div id="editor-template-toggle-wrap" class="hidden"
                                      style="display:flex; align-items:center; gap:6px;">
                                     <label style="display:flex; align-items:center; gap:5px; cursor:pointer; user-select:none;">
@@ -976,11 +653,10 @@
                                     </label>
                                 </div>
                             </div>
-
                             <div style="display:flex; gap:8px; flex-wrap:wrap; align-items:center;">
                                 <button id="editor-columns-btn"       class="btn btn-outlined btn-xs" type="button">⚙ Столбцы</button>
-                                <button id="editor-toggle-status-btn" class="btn btn-sm hidden"        type="button"></button>
-                                <button id="editor-delete-event-btn"  class="btn btn-danger btn-xs"   type="button">🗑 Удалить список</button>
+                                <button id="editor-toggle-status-btn" class="btn btn-sm hidden"       type="button"></button>
+                                <button id="editor-delete-event-btn"  class="btn btn-danger btn-xs"  type="button">🗑 Удалить список</button>
                             </div>
                         </div>
 
@@ -1064,25 +740,36 @@
                         <div style="display:flex; align-items:center; gap:8px; flex:1; max-width:400px;">
                             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor"
                                  stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
-                                 style="flex-shrink:0;color:var(--md-on-surface-hint);">
+                                 style="flex-shrink:0; color:var(--md-on-surface-hint);">
                                 <circle cx="11" cy="11" r="8"/>
                                 <path d="M21 21l-4.35-4.35"/>
                             </svg>
                             <input type="text" id="persons-search" placeholder="Поиск по ФИО…" autocomplete="off"
-                                   style="flex:1;border:none;background:transparent;font-size:0.88rem;outline:none;color:var(--md-on-surface);">
+                                   style="flex:1; border:none; background:transparent; font-size:0.88rem; outline:none; color:var(--md-on-surface);">
                         </div>
-                        <div style="display:flex; gap:8px;">
+                        <div style="display:flex; gap:8px; flex-wrap:wrap;">
                             <input type="file" id="persons-import-input" accept=".xlsx,.xls" class="hidden">
-                            <button id="persons-import-btn" class="btn btn-outlined btn-sm" type="button">⬆ Импорт Excel</button>
-                            <button id="persons-add-btn"    class="btn btn-success btn-sm"   type="button">+ Добавить</button>
+                            <!-- ↓ Кнопка скачать шаблон -->
+                            <button id="persons-template-btn" class="btn btn-outlined btn-sm" type="button"
+                                    title="Скачать шаблон Excel для заполнения">
+                                ⬇ Шаблон
+                            </button>
+                            <button id="persons-import-btn" class="btn btn-outlined btn-sm" type="button">
+                                ⬆ Импорт Excel
+                            </button>
+                            <button id="persons-add-btn" class="btn btn-success btn-sm" type="button">
+                                + Добавить
+                            </button>
                         </div>
                     </div>
 
-                    <!-- Форма добавления (скрыта) -->
-                    <div id="persons-add-form" class="hidden"
-                         style="display:flex; flex-wrap:wrap; gap:12px; align-items:flex-end;
-                                padding:14px 20px; background:var(--md-surface-variant);
-                                border-bottom:1px solid var(--md-outline-variant);">
+                    <!-- ════════════════════════════════════════════════════════
+                         ФОРМА ДОБАВЛЕНИЯ — ИСПРАВЛЕНО:
+                         убран display:flex из inline-style, теперь .hidden
+                         работает корректно. JS управляет показом через
+                         form.style.display = 'flex' / classList.add('hidden')
+                         ════════════════════════════════════════════════════════ -->
+                    <div id="persons-add-form" class="hidden">
                         <div class="field" style="flex:2; min-width:180px;">
                             <label class="field-label" for="person-fullname">ФИО</label>
                             <input type="text" id="person-fullname" placeholder="Иванов Иван Иванович" autocomplete="off">
@@ -1254,7 +941,7 @@
             </div><!-- /#tab-duty -->
 
             <!-- ══════════════════════════════════════════════════════════════
-                 Tab: Боевой расчёт (Для Админа)
+                 Tab: Боевой расчёт
                  ══════════════════════════════════════════════════════════════ -->
             <div id="tab-combat" class="hidden" role="tabpanel">
 
@@ -1262,12 +949,16 @@
                 <div class="tools-bar">
                     <div class="tools-bar__buttons">
                         <button class="tool-trigger active" data-panel="cc-panel-calendar-admin" type="button">
-                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                 stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                                 <rect x="3" y="4" width="18" height="18" rx="2" ry="2"/>
-                                <line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/>
+                                <line x1="16" y1="2" x2="16" y2="6"/>
+                                <line x1="8"  y1="2" x2="8"  y2="6"/>
+                                <line x1="3"  y1="10" x2="21" y2="10"/>
                             </svg>
                             Календарь расчётов
-                            <svg class="tool-trigger__chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                            <svg class="tool-trigger__chevron" width="12" height="12" viewBox="0 0 24 24" fill="none"
+                                 stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
                                 <path d="M6 9l6 6 6-6"/>
                             </svg>
                         </button>
@@ -1284,22 +975,26 @@
                                 <button id="cc-next-week-admin" class="btn btn-outlined btn-xs" type="button">След. →</button>
                             </div>
 
-                            <div id="cc-instances-list-admin" style="display: grid; grid-template-columns: repeat(7, minmax(140px, 1fr)); gap: 8px; overflow-x: auto; padding-bottom: 4px;">
-                                <p class="hint" style="grid-column: 1 / -1; text-align: center;">Загрузка...</p>
+                            <div id="cc-instances-list-admin" style="display:grid; grid-template-columns:repeat(7, minmax(140px, 1fr)); gap:8px; overflow-x:auto; padding-bottom:4px;">
+                                <p class="hint" style="grid-column:1 / -1; text-align:center;">Загрузка...</p>
                             </div>
                         </div>
                     </div>
                 </div>
 
                 <!-- Зона Редактора (внизу) -->
-                <div class="editor-panel" style="margin-top: 16px;">
+                <div class="editor-panel" style="margin-top:16px;">
                     <div id="cc-view-empty-admin" style="padding:48px 24px; text-align:center; color:var(--md-on-surface-hint);">
-                        <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" style="margin-bottom:12px;">
-                            <rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/>
+                        <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                             stroke-width="1.5" style="margin-bottom:12px;">
+                            <rect x="3" y="4" width="18" height="18" rx="2" ry="2"/>
+                            <line x1="16" y1="2" x2="16" y2="6"/>
+                            <line x1="8"  y1="2" x2="8"  y2="6"/>
+                            <line x1="3"  y1="10" x2="21" y2="10"/>
                         </svg>
                         <p style="font-size:.875rem;">Выберите расчёт на любой день из календаря сверху</p>
                     </div>
-                    <div id="cc-view-panel-admin" class="hidden" style="padding: 24px;"></div>
+                    <div id="cc-view-panel-admin" class="hidden" style="padding:24px;"></div>
                 </div>
 
             </div><!-- /#tab-combat -->
@@ -1340,7 +1035,6 @@
 
 <!-- ═══════════════════════════════════════════════
      TOOLS BAR — toggle panels
-     При открытии панели «Должности» — перезагружаем список
      ═══════════════════════════════════════════════ -->
 <script type="module">
     import { loadAndRenderPositions } from '/static/js/admin.js';

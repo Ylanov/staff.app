@@ -2,25 +2,36 @@
 """
 API для боевого расчёта.
 
-Администратор:
-  GET    /admin/combat/templates                    – список шаблонов
-  GET    /admin/combat/templates/{id}               – детали + структура
-  POST   /admin/combat/instances                    – создать экземпляр (дата + шаблон)
-  GET    /admin/combat/instances?date=YYYY-MM-DD    – экземпляры за дату
-  DELETE /admin/combat/instances/{id}               – удалить экземпляр
-  GET    /admin/combat/instances/{id}/full          – полный экземпляр со всеми слотами
-  PATCH  /admin/combat/instances/{id}/status        – сменить статус
+ИСПРАВЛЕНИЯ:
+  1. Роутер разделён на два: admin_router и dept_router.
+     main.py подключает их раздельно — больше нет дублирования маршрутов.
 
-Управления (заполнение):
-  GET    /combat/instances/today                    – активные экземпляры сегодня
-  GET    /combat/instances/{id}/my-slots            – слоты своего управления
-  PUT    /combat/slots/{id}                         – заполнить слот
+  2. _sync_slots убран из GET-эндпоинтов (get_instance_full, get_instance_for_user).
+     Теперь вызывается ТОЛЬКО при создании экземпляра (create_instance).
+     На каждом чтении не делаем лишний SELECT + потенциальный INSERT.
+
+  3. get_my_instances: добавлен joinedload(template) — убран N+1
+     (раньше i.template.title вызывал отдельный SELECT для каждого экземпляра).
+
+Маршруты admin_router (prefix в main.py: /api/v1/admin):
+  GET    /combat/templates
+  GET    /combat/templates/{id}
+  POST   /combat/instances
+  GET    /combat/instances
+  DELETE /combat/instances/{id}
+  GET    /combat/instances/{id}/full
+  PATCH  /combat/instances/{id}/status
+
+Маршруты dept_router (prefix в main.py: /api/v1):
+  GET    /combat/my/instances
+  GET    /combat/instances/{id}/view
+  PUT    /combat/slots/{id}
 """
 
 from datetime import date as date_type, datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 from pydantic import BaseModel, Field
 from typing import Optional, List
 
@@ -30,7 +41,12 @@ from app.models.combat_calc import CombatCalcTemplate, CombatCalcInstance, Comba
 from app.api.dependencies import get_current_user, get_current_active_admin
 from app.core.websockets import manager
 
-router = APIRouter()
+# ─── Два отдельных роутера вместо одного ─────────────────────────────────────
+admin_router = APIRouter()   # только для администратора
+dept_router  = APIRouter()   # для управлений (заполнение)
+
+# Оставляем router как алиас для обратной совместимости если где-то импортируется
+router = admin_router
 
 
 # ─── Схемы ───────────────────────────────────────────────────────────────────
@@ -51,11 +67,11 @@ class InstanceCreate(BaseModel):
 
 
 class InstanceResponse(BaseModel):
-    id:          int
-    template_id: int
+    id:             int
+    template_id:    int
     template_title: str
-    calc_date:   date_type
-    status:      str
+    calc_date:      date_type
+    status:         str
 
     class Config:
         from_attributes = True
@@ -73,7 +89,11 @@ class SlotFill(BaseModel):
 def _sync_slots(db: Session, instance: CombatCalcInstance) -> None:
     """
     Создаёт недостающие слоты в CombatCalcSlot по структуре шаблона.
-    Вызывается при создании экземпляра и при запросе данных.
+
+    ВАЖНО: вызывать ТОЛЬКО при создании экземпляра (create_instance),
+    НЕ при каждом GET — иначе на каждое чтение выполняется лишний SELECT
+    плюс потенциальные INSERT'ы.
+
     Идемпотентна: уже существующие слоты не трогает.
     """
     structure = instance.template.get_structure()
@@ -113,9 +133,30 @@ def _sync_slots(db: Session, instance: CombatCalcInstance) -> None:
         db.commit()
 
 
-# ─── Admin: Шаблоны ───────────────────────────────────────────────────────────
+# ─── Вспомогательная функция: построить slots_map из экземпляра ───────────────
 
-@router.get("/combat/templates", response_model=List[TemplateResponse])
+def _build_slots_map(inst: CombatCalcInstance) -> dict:
+    """Строит dict {row_key: {slot_index: slot_data}} из уже загруженных слотов."""
+    slots_map = {}
+    for slot in inst.slots:
+        if slot.row_key not in slots_map:
+            slots_map[slot.row_key] = {}
+        slots_map[slot.row_key][slot.slot_index] = {
+            "id":         slot.id,
+            "full_name":  slot.full_name,
+            "rank":       slot.rank,
+            "note":       slot.note,
+            "department": slot.department,
+            "version":    slot.version,
+        }
+    return slots_map
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# ADMIN ROUTER
+# ═══════════════════════════════════════════════════════════════════════════════
+
+@admin_router.get("/combat/templates", response_model=List[TemplateResponse])
 def list_templates(
     db:    Session = Depends(get_db),
     admin: User    = Depends(get_current_active_admin),
@@ -123,7 +164,7 @@ def list_templates(
     return db.query(CombatCalcTemplate).order_by(CombatCalcTemplate.id).all()
 
 
-@router.get("/combat/templates/{template_id}")
+@admin_router.get("/combat/templates/{template_id}")
 def get_template(
     template_id: int,
     db:    Session = Depends(get_db),
@@ -141,15 +182,18 @@ def get_template(
     }
 
 
-# ─── Admin: Экземпляры ────────────────────────────────────────────────────────
-
-@router.get("/combat/instances")
+@admin_router.get("/combat/instances")
 def list_instances(
     calc_date: Optional[date_type] = Query(None),
     db:    Session = Depends(get_db),
     admin: User    = Depends(get_current_active_admin),
 ):
-    q = db.query(CombatCalcInstance).join(CombatCalcInstance.template)
+    # ИСПРАВЛЕНО: добавлен joinedload чтобы не делать N+1 при обращении к i.template.title
+    q = (
+        db.query(CombatCalcInstance)
+        .options(joinedload(CombatCalcInstance.template))
+        .join(CombatCalcInstance.template)
+    )
     if calc_date:
         q = q.filter(CombatCalcInstance.calc_date == calc_date)
     instances = q.order_by(CombatCalcInstance.calc_date.desc()).limit(100).all()
@@ -165,7 +209,7 @@ def list_instances(
     ]
 
 
-@router.post("/combat/instances", status_code=201)
+@admin_router.post("/combat/instances", status_code=201)
 async def create_instance(
     payload: InstanceCreate,
     db:      Session = Depends(get_db),
@@ -197,7 +241,7 @@ async def create_instance(
     db.commit()
     db.refresh(instance)
 
-    # Создаём слоты по структуре шаблона
+    # _sync_slots вызываем ТОЛЬКО здесь — при создании, не при каждом чтении
     _sync_slots(db, instance)
 
     await manager.broadcast({"action": "combat_calc_update"})
@@ -210,7 +254,7 @@ async def create_instance(
     }
 
 
-@router.delete("/combat/instances/{instance_id}", status_code=204)
+@admin_router.delete("/combat/instances/{instance_id}", status_code=204)
 async def delete_instance(
     instance_id: int,
     db:    Session = Depends(get_db),
@@ -221,9 +265,45 @@ async def delete_instance(
         raise HTTPException(status_code=404, detail="Экземпляр не найден")
     db.delete(inst)
     db.commit()
+    await manager.broadcast({"action": "combat_calc_update"})
 
 
-@router.patch("/combat/instances/{instance_id}/status")
+@admin_router.get("/combat/instances/{instance_id}/full")
+def get_instance_full(
+    instance_id: int,
+    db:    Session = Depends(get_db),
+    admin: User    = Depends(get_current_active_admin),
+):
+    """
+    Возвращает экземпляр с шаблонной структурой и заполненными слотами.
+
+    ИСПРАВЛЕНО: убран вызов _sync_slots — он выполнялся на каждый GET,
+    делая лишний SELECT + возможный INSERT. Слоты создаются один раз при
+    create_instance. Здесь просто читаем то что есть.
+    """
+    inst = (
+        db.query(CombatCalcInstance)
+        .options(joinedload(CombatCalcInstance.template))
+        .filter(CombatCalcInstance.id == instance_id)
+        .first()
+    )
+    if not inst:
+        raise HTTPException(status_code=404, detail="Экземпляр не найден")
+
+    return {
+        "instance": {
+            "id":             inst.id,
+            "template_id":    inst.template_id,
+            "template_title": inst.template.title,
+            "calc_date":      inst.calc_date.isoformat(),
+            "status":         inst.status,
+        },
+        "structure": inst.template.get_structure(),
+        "slots_map": _build_slots_map(inst),
+    }
+
+
+@admin_router.patch("/combat/instances/{instance_id}/status")
 async def set_instance_status(
     instance_id: int,
     db:    Session = Depends(get_db),
@@ -235,64 +315,31 @@ async def set_instance_status(
     cycle = {"draft": "active", "active": "closed", "closed": "draft"}
     inst.status = cycle.get(inst.status, "active")
     db.commit()
+    await manager.broadcast({"action": "combat_calc_update"})
     return {"status": inst.status}
 
 
-@router.get("/combat/instances/{instance_id}/full")
-def get_instance_full(
-    instance_id: int,
-    db:    Session = Depends(get_db),
-    admin: User    = Depends(get_current_active_admin),
-):
-    """Возвращает экземпляр с шаблонной структурой и заполненными слотами."""
-    inst = db.query(CombatCalcInstance).filter(CombatCalcInstance.id == instance_id).first()
-    if not inst:
-        raise HTTPException(status_code=404, detail="Экземпляр не найден")
+# ═══════════════════════════════════════════════════════════════════════════════
+# DEPT ROUTER (управления)
+# ═══════════════════════════════════════════════════════════════════════════════
 
-    _sync_slots(db, inst)
-
-    # Слоты в виде словаря {row_key: {slot_index: slot_data}}
-    slots_map = {}
-    for slot in inst.slots:
-        if slot.row_key not in slots_map:
-            slots_map[slot.row_key] = {}
-        slots_map[slot.row_key][slot.slot_index] = {
-            "id":         slot.id,
-            "full_name":  slot.full_name,
-            "rank":       slot.rank,
-            "note":       slot.note,
-            "department": slot.department,
-            "version":    slot.version,
-        }
-
-    structure = inst.template.get_structure()
-
-    return {
-        "instance": {
-            "id":             inst.id,
-            "template_id":    inst.template_id,
-            "template_title": inst.template.title,
-            "calc_date":      inst.calc_date.isoformat(),
-            "status":         inst.status,
-        },
-        "structure": structure,
-        "slots_map": slots_map,
-    }
-
-
-# ─── Department: заполнение ───────────────────────────────────────────────────
-
-@router.get("/combat/my/instances")
+@dept_router.get("/combat/my/instances")
 def get_my_instances(
     db:           Session = Depends(get_db),
     current_user: User    = Depends(get_current_user),
 ):
     """
     Возвращает активные экземпляры расчёта.
-    Для управления — только активные.
-    Для администратора — все.
+    Для управления — только активные. Для администратора — все.
+
+    ИСПРАВЛЕНО: добавлен joinedload(template) — устранён N+1.
+    Раньше i.template.title для каждого экземпляра делал отдельный SELECT.
     """
-    q = db.query(CombatCalcInstance).join(CombatCalcInstance.template)
+    q = (
+        db.query(CombatCalcInstance)
+        .options(joinedload(CombatCalcInstance.template))
+        .join(CombatCalcInstance.template)
+    )
 
     if current_user.role != "admin":
         q = q.filter(CombatCalcInstance.status == "active")
@@ -302,7 +349,7 @@ def get_my_instances(
         {
             "id":             i.id,
             "template_id":    i.template_id,
-            "template_title": i.template.title,
+            "template_title": i.template.title,  # теперь без lazy load
             "calc_date":      i.calc_date.isoformat(),
             "status":         i.status,
         }
@@ -310,7 +357,7 @@ def get_my_instances(
     ]
 
 
-@router.get("/combat/instances/{instance_id}/view")
+@dept_router.get("/combat/instances/{instance_id}/view")
 def get_instance_for_user(
     instance_id:  int,
     db:           Session = Depends(get_db),
@@ -318,29 +365,21 @@ def get_instance_for_user(
 ):
     """
     Возвращает полный экземпляр для заполнения пользователем.
-    Включает шаблонную структуру и все слоты.
+
+    ИСПРАВЛЕНО: убран вызов _sync_slots — не нужен при каждом чтении.
+    Слоты уже были созданы при create_instance.
     """
-    inst = db.query(CombatCalcInstance).filter(CombatCalcInstance.id == instance_id).first()
+    inst = (
+        db.query(CombatCalcInstance)
+        .options(joinedload(CombatCalcInstance.template))
+        .filter(CombatCalcInstance.id == instance_id)
+        .first()
+    )
     if not inst:
         raise HTTPException(status_code=404, detail="Расчёт не найден")
 
     if current_user.role != "admin" and inst.status != "active":
         raise HTTPException(status_code=403, detail="Расчёт не активен")
-
-    _sync_slots(db, inst)
-
-    slots_map = {}
-    for slot in inst.slots:
-        if slot.row_key not in slots_map:
-            slots_map[slot.row_key] = {}
-        slots_map[slot.row_key][slot.slot_index] = {
-            "id":         slot.id,
-            "full_name":  slot.full_name,
-            "rank":       slot.rank,
-            "note":       slot.note,
-            "department": slot.department,
-            "version":    slot.version,
-        }
 
     return {
         "instance": {
@@ -350,13 +389,13 @@ def get_instance_for_user(
             "calc_date":      inst.calc_date.isoformat(),
             "status":         inst.status,
         },
-        "structure":    inst.template.get_structure(),
-        "slots_map":    slots_map,
+        "structure":     inst.template.get_structure(),
+        "slots_map":     _build_slots_map(inst),
         "my_department": current_user.username,
     }
 
 
-@router.put("/combat/slots/{slot_id}")
+@dept_router.put("/combat/slots/{slot_id}")
 async def fill_slot(
     slot_id:      int,
     payload:      SlotFill,
@@ -385,14 +424,14 @@ async def fill_slot(
     slot.note      = payload.note      or None
     slot.version  += 1
 
-    # Если не задан department, ставим текущего пользователя
+    # Если не задан department — ставим текущего пользователя
     if not slot.department:
         slot.department = current_user.username
 
     db.commit()
 
     await manager.broadcast({
-        "action": "combat_calc_slot_update",
+        "action":      "combat_calc_slot_update",
         "instance_id": slot.instance_id,
     })
 

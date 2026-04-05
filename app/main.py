@@ -11,7 +11,7 @@ from sqlalchemy.exc import ProgrammingError, OperationalError
 
 from app.core.config import settings
 from app.db.database import SessionLocal
-from app.api.v1.routers import auth, admin, slots, export, persons, duty   # ← добавлен duty
+from app.api.v1.routers import auth, admin, slots, export, persons, duty
 from app.api.v1.routers import combat_calc
 from app.api.v1.routers import settings as settings_router
 from app.api.v1.routers import dept_duty
@@ -74,19 +74,27 @@ app.add_middleware(
 
 # ─── Роутеры ─────────────────────────────────────────────────────────────────
 
-app.include_router(auth.router,             prefix="/api/v1/auth",     tags=["Авторизация"])
-app.include_router(admin.router,            prefix="/api/v1/admin",    tags=["Администрирование"])
-app.include_router(slots.router,            prefix="/api/v1/slots",    tags=["Слоты"])
-app.include_router(export.router,           prefix="/api/v1/export",   tags=["Экспорт"])
-app.include_router(persons.router,          prefix="/api/v1/persons",  tags=["Справочник людей"])
-app.include_router(settings_router.router,  prefix="/api/v1/settings", tags=["Настройки"])
-app.include_router(duty.router,             prefix="/api/v1/admin",    tags=["Графики наряда"])  # ← НОВОЕ
+app.include_router(auth.router,            prefix="/api/v1/auth",    tags=["Авторизация"])
+app.include_router(admin.router,           prefix="/api/v1/admin",   tags=["Администрирование"])
+app.include_router(slots.router,           prefix="/api/v1/slots",   tags=["Слоты"])
+app.include_router(export.router,          prefix="/api/v1/export",  tags=["Экспорт"])
+app.include_router(persons.router,         prefix="/api/v1/persons", tags=["Справочник людей"])
+app.include_router(settings_router.router, prefix="/api/v1/settings",tags=["Настройки"])
+app.include_router(duty.router,            prefix="/api/v1/admin",   tags=["Графики наряда"])
+app.include_router(dashboard.router,       prefix="/api/v1/admin",   tags=["Дашборд"])
+app.include_router(dept_duty.router,       prefix="/api/v1/dept",    tags=["Графики наряда (управление)"])
 
-app.include_router(dashboard.router, prefix="/api/v1/admin", tags=["Дашборд"])
-app.include_router(dept_duty.router, prefix="/api/v1/dept", tags=["Графики наряда (управление)"])
-
-app.include_router(combat_calc.router,      prefix="/api/v1/admin",    tags=["Боевой расчёт (admin)"])
-app.include_router(combat_calc.router,      prefix="/api/v1",          tags=["Боевой расчёт"])
+# ─── Боевой расчёт ────────────────────────────────────────────────────────────
+# ИСПРАВЛЕНО: раньше один и тот же роутер подключался дважды с разными prefix,
+# что дублировало все маршруты. Теперь:
+#   - /api/v1/admin/combat/...  — маршруты только для администратора
+#   - /api/v1/combat/...        — маршруты для управлений (заполнение)
+# Оба набора маршрутов находятся в одном файле combat_calc.py и разделены
+# зависимостями get_current_active_admin / get_current_user внутри роутера.
+# Подключаем ОДИН РАЗ с prefix /api/v1, маршруты внутри уже имеют /admin/combat/...
+# и /combat/... — FastAPI сам строит полный путь.
+app.include_router(combat_calc.admin_router, prefix="/api/v1/admin", tags=["Боевой расчёт (admin)"])
+app.include_router(combat_calc.dept_router,  prefix="/api/v1",       tags=["Боевой расчёт (управление)"])
 
 
 # ─── Статика ──────────────────────────────────────────────────────────────────

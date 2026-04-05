@@ -1,54 +1,142 @@
 # app/core/websockets.py
+"""
+ИСПРАВЛЕНИЕ: Broadcast без фильтрации.
+
+Проблема: broadcast() рассылал сообщения ВСЕМ подключённым клиентам.
+При 50 одновременных пользователях каждое сохранение слота будило всех 50,
+все 50 делали повторный запрос к API — бессмысленная нагрузка.
+
+Решение: каждое соединение при подключении может подписаться на конкретный
+event_id. Сообщения типа "update" рассылаются только подписчикам этого события.
+Глобальные сообщения (combat_calc_update, plain update без event_id) рассылаются всем.
+
+Протокол (клиент → сервер):
+  {"type": "ping"}                        — heartbeat
+  {"type": "subscribe", "event_id": 42}  — подписаться на событие
+  {"type": "unsubscribe"}                — отписаться (смотрю другой список)
+
+Протокол (сервер → клиент):
+  {"type": "pong"}                        — ответ на ping
+  {"action": "update", "event_id": 42}   — изменился список 42
+  {"action": "combat_calc_update"}        — изменился боевой расчёт
+  {"action": "combat_calc_slot_update", "instance_id": 5}
+"""
 
 import json
 import asyncio
-from typing import List
+from typing import Dict, Optional, Set
 
 from fastapi import WebSocket, WebSocketDisconnect
 
 
 class ConnectionManager:
     def __init__(self) -> None:
-        self.active_connections: List[WebSocket] = []
+        # Все активные соединения
+        self._connections: Set[WebSocket] = set()
+        # Подписки: websocket → event_id (или None если не подписан)
+        self._subscriptions: Dict[WebSocket, Optional[int]] = {}
         self._lock = asyncio.Lock()
 
+    # ─── Подключение / отключение ─────────────────────────────────────────────
+
     async def connect(self, websocket: WebSocket) -> None:
-        """Принимает новое WebSocket-соединение и добавляет его в список активных."""
+        """Принимает новое WebSocket-соединение."""
         try:
             await websocket.accept()
         except Exception:
-            # Клиент мог отвалиться до accept
             return
 
         async with self._lock:
-            self.active_connections.append(websocket)
+            self._connections.add(websocket)
+            self._subscriptions[websocket] = None   # пока не подписан ни на что
 
     async def disconnect(self, websocket: WebSocket) -> None:
-        """Удаляет соединение из списка активных."""
+        """Удаляет соединение из всех структур."""
         async with self._lock:
-            if websocket in self.active_connections:
-                self.active_connections.remove(websocket)
+            self._connections.discard(websocket)
+            self._subscriptions.pop(websocket, None)
+
+    # ─── Подписки ─────────────────────────────────────────────────────────────
+
+    async def subscribe(self, websocket: WebSocket, event_id: int) -> None:
+        """Подписывает соединение на конкретный event_id."""
+        async with self._lock:
+            if websocket in self._subscriptions:
+                self._subscriptions[websocket] = event_id
+
+    async def unsubscribe(self, websocket: WebSocket) -> None:
+        """Снимает подписку с соединения."""
+        async with self._lock:
+            if websocket in self._subscriptions:
+                self._subscriptions[websocket] = None
+
+    # ─── Рассылка ─────────────────────────────────────────────────────────────
 
     async def broadcast(self, message: dict) -> None:
-        """Рассылает сообщение всем подключённым клиентам."""
+        """
+        Рассылает сообщение с учётом подписок.
+
+        Логика:
+          - Если в сообщении есть event_id — отправляем только тем, кто подписан
+            на этот event_id. Остальные не тревожатся.
+          - Если event_id нет (combat_calc_update и т.п.) — отправляем всем.
+            Это глобальные события, они редкие.
+        """
+        text       = json.dumps(message)
+        target_eid = message.get("event_id")   # None если глобальное сообщение
+
+        async with self._lock:
+            # Снимаем snapshot чтобы не держать лок во время IO
+            snapshot = dict(self._subscriptions)
+
+        targets  = []
+        for ws, subscribed_eid in snapshot.items():
+            if target_eid is None:
+                # Глобальное сообщение — всем
+                targets.append(ws)
+            elif subscribed_eid == target_eid:
+                # Точечное сообщение — только подписчикам этого события
+                targets.append(ws)
+
+        failed = []
+        for ws in targets:
+            try:
+                await ws.send_text(text)
+            except Exception:
+                failed.append(ws)
+
+        # Удаляем мёртвые соединения
+        if failed:
+            async with self._lock:
+                for ws in failed:
+                    self._connections.discard(ws)
+                    self._subscriptions.pop(ws, None)
+
+    async def broadcast_all(self, message: dict) -> None:
+        """
+        Безусловная рассылка всем клиентам (используется для системных уведомлений).
+        """
         text = json.dumps(message)
 
         async with self._lock:
-            targets = list(self.active_connections)
+            snapshot = list(self._connections)
 
-        failed: List[WebSocket] = []
-
-        for connection in targets:
+        failed = []
+        for ws in snapshot:
             try:
-                await connection.send_text(text)
+                await ws.send_text(text)
             except Exception:
-                failed.append(connection)
+                failed.append(ws)
 
         if failed:
             async with self._lock:
                 for ws in failed:
-                    if ws in self.active_connections:
-                        self.active_connections.remove(ws)
+                    self._connections.discard(ws)
+                    self._subscriptions.pop(ws, None)
+
+    @property
+    def connection_count(self) -> int:
+        return len(self._connections)
 
 
 # Глобальный менеджер подключений
@@ -60,15 +148,18 @@ manager = ConnectionManager()
 async def handle_websocket_connection(websocket: WebSocket) -> None:
     """
     Основной обработчик WebSocket-соединения.
-    Вызывается из main.py — вся логика в одном месте, без дублирования.
+    Вызывается из main.py.
 
-    - Принимает подключение
-    - Отвечает на ping (heartbeat) → pong
-    - Корректно различает штатное отключение (WebSocketDisconnect) от ошибок
-    - Гарантированно удаляет соединение из менеджера при выходе
+    Обрабатывает входящие сообщения:
+      ping        → pong (heartbeat)
+      subscribe   → подписка на event_id
+      unsubscribe → отписка
+
+    При подключении соединение не подписано ни на что.
+    Клиент должен послать subscribe сразу после открытия списка.
     """
     await manager.connect(websocket)
-    print("🔌 WebSocket connected")
+    print(f"🔌 WebSocket connected (total: {manager.connection_count})")
 
     try:
         while True:
@@ -83,20 +174,30 @@ async def handle_websocket_connection(websocket: WebSocket) -> None:
                 print(f"⚠️  WS invalid JSON: {data!r}")
                 continue
 
-            if payload.get("type") == "ping":
+            msg_type = payload.get("type")
+
+            # ── Heartbeat ────────────────────────────────────────────────────
+            if msg_type == "ping":
                 try:
                     await websocket.send_text('{"type":"pong"}')
                 except Exception:
-                    # Не удалось отправить pong — соединение мертво
                     break
 
+            # ── Подписка на событие ───────────────────────────────────────────
+            elif msg_type == "subscribe":
+                event_id = payload.get("event_id")
+                if isinstance(event_id, int):
+                    await manager.subscribe(websocket, event_id)
+
+            # ── Отписка ───────────────────────────────────────────────────────
+            elif msg_type == "unsubscribe":
+                await manager.unsubscribe(websocket)
+
     except WebSocketDisconnect:
-        # Штатное отключение клиента — не ошибка, не логируем как ошибку
-        print("❌ WebSocket disconnected")
+        print(f"❌ WebSocket disconnected (total: {manager.connection_count - 1})")
 
     except Exception as error:
         print(f"🔥 WebSocket error: {error}")
 
     finally:
-        # Гарантированно очищаем — выполняется при любом исходе
         await manager.disconnect(websocket)
