@@ -317,6 +317,26 @@ export async function loadPersons(searchQuery = '') {
     const empty = document.getElementById('persons-empty');
     if (!tbody) return;
 
+    // --- ИСПРАВЛЕНИЕ: Раскрываем колонки администратора здесь ---
+    // (на этот момент мы уже точно знаем, что пользователь - админ)
+    const isAdmin = window.currentUserRole === 'admin';
+    if (isAdmin) {
+        document.getElementById('persons-dept-col')?.classList.remove('hidden');
+        document.querySelector('.admin-only-field')?.classList.remove('hidden');
+
+        // Заполняем выпадающий список управлений в форме добавления
+        const deptSelect = document.getElementById('person-dept');
+        if (deptSelect && deptSelect.options.length <= 1 && window.availableRoles) {
+            window.availableRoles.forEach(r => {
+                const opt = document.createElement('option');
+                opt.value = r;
+                opt.textContent = formatRole(r);
+                deptSelect.appendChild(opt);
+            });
+        }
+    }
+    // -----------------------------------------------------------
+
     try {
         const params = searchQuery ? `?q=${encodeURIComponent(searchQuery)}&limit=500` : '?limit=500';
         _personsData = await api.get(`/persons${params}`);
@@ -347,15 +367,23 @@ function renderPersonsTable(persons) {
         return;
     }
 
+    // Вспомогательная функция для красивого формата даты
+    const formatDate = (isoDate) => {
+        if (!isoDate) return '—';
+        const [y, m, d] = isoDate.split('-');
+        return `${d}.${m}.${y}`;
+    };
+
     tbody.innerHTML = persons.map(p => {
         const deptBadge = isAdmin
-            ? `<td><span style="font-size:0.72rem;padding:2px 7px;border-radius:10px;background:var(--md-primary-light);color:var(--md-primary-dark);border:1px solid #c5ddd8;white-space:nowrap;">${esc(formatRole(p.department || '—'))}</span></td>`
+            ? `<td><span style="font-size:0.7rem;padding:2px 7px;border-radius:10px;background:var(--md-primary-light);color:var(--md-primary-dark);border:1px solid #c5ddd8;white-space:nowrap;">${esc(formatRole(p.department || '—'))}</span></td>`
             : '';
 
+        // РЕЖИМ РЕДАКТИРОВАНИЯ (с правильными CSS классами .person-inline-input)
         if (_editingId === p.id) {
             const deptEditCell = isAdmin
-                ? `<td><select id="edit-dept-${p.id}" style="font-size:0.8rem;padding:3px 6px;border:1px solid var(--md-outline);border-radius:var(--md-radius-sm);">
-                        <option value="">— без управления —</option>
+                ? `<td><select id="edit-dept-${p.id}" class="person-inline-input" style="padding:0 4px !important;">
+                        <option value="">— без упр. —</option>
                         ${(window.availableRoles || []).map(r => `<option value="${r}" ${r === p.department ? 'selected' : ''}>${esc(formatRole(r))}</option>`).join('')}
                    </select></td>`
                 : '';
@@ -363,30 +391,39 @@ function renderPersonsTable(persons) {
             return `
                 <tr data-person-id="${p.id}" id="person-row-${p.id}" style="background:var(--md-primary-light);">
                     <td style="color:var(--md-on-surface-hint);font-family:var(--md-font-mono);font-size:0.72rem;">${p.id}</td>
-                    <td><input id="edit-name-${p.id}" value="${esc(p.full_name)}" style="width:100%;padding:4px 7px;border:1px solid var(--md-outline);border-radius:var(--md-radius-sm);font-size:0.85rem;"></td>
-                    <td><input id="edit-rank-${p.id}" value="${esc(p.rank||'')}" placeholder="Звание" style="width:100%;padding:4px 7px;border:1px solid var(--md-outline);border-radius:var(--md-radius-sm);font-size:0.85rem;"></td>
-                    <td><input id="edit-doc-${p.id}"  value="${esc(p.doc_number||'')}" placeholder="№ Документа" style="width:100%;padding:4px 7px;border:1px solid var(--md-outline);border-radius:var(--md-radius-sm);font-size:0.85rem;"></td>
+                    <td><input id="edit-name-${p.id}"  value="${esc(p.full_name)}" class="person-inline-input"></td>
+                    <td><input id="edit-rank-${p.id}"  value="${esc(p.rank||'')}" class="person-inline-input"></td>
+                    <td><input id="edit-doc-${p.id}"   value="${esc(p.doc_number||'')}" class="person-inline-input"></td>
                     ${deptEditCell}
+                    <td><input id="edit-pos-${p.id}"   value="${esc(p.position_title||'')}" class="person-inline-input"></td>
+                    <td><input id="edit-birth-${p.id}" value="${esc(p.birth_date||'')}" type="date" class="person-inline-input" style="padding:0 4px !important;"></td>
+                    <td><input id="edit-phone-${p.id}" value="${esc(p.phone||'')}" class="person-inline-input"></td>
+                    <td><input id="edit-notes-${p.id}" value="${esc(p.notes||'')}" class="person-inline-input"></td>
                     <td>
                         <div style="display:flex;gap:4px;">
-                            <button class="btn btn-filled btn-xs person-save-edit-btn" data-person-id="${p.id}" type="button">✓</button>
-                            <button class="btn btn-outlined btn-xs person-cancel-edit-btn" type="button">✕</button>
+                            <button class="btn btn-filled btn-xs person-save-edit-btn" data-person-id="${p.id}" type="button" title="Сохранить">✓</button>
+                            <button class="btn btn-outlined btn-xs person-cancel-edit-btn" type="button" title="Отмена">✕</button>
                         </div>
                     </td>
                 </tr>`;
         }
 
+        // РЕЖИМ ПРОСМОТРА
         return `
             <tr data-person-id="${p.id}" id="person-row-${p.id}">
                 <td style="color:var(--md-on-surface-hint);font-family:var(--md-font-mono);font-size:0.72rem;">${p.id}</td>
-                <td class="person-cell-name">${esc(p.full_name)}</td>
+                <td class="person-cell-name" style="font-weight:500;">${esc(p.full_name)}</td>
                 <td class="person-cell-rank">${esc(p.rank || '—')}</td>
                 <td class="person-cell-doc">${esc(p.doc_number || '—')}</td>
                 ${deptBadge}
+                <td><span style="font-size:0.8rem;color:var(--md-on-surface-variant);">${esc(p.position_title || '—')}</span></td>
+                <td style="font-size:0.8rem;white-space:nowrap;">${formatDate(p.birth_date)}</td>
+                <td style="font-size:0.8rem;white-space:nowrap;">${esc(p.phone || '—')}</td>
+                <td><span style="font-size:0.75rem;color:var(--md-on-surface-hint);">${esc(p.notes || '—')}</span></td>
                 <td>
                     <div style="display:flex;gap:4px;">
-                        <button class="btn btn-outlined btn-xs person-edit-btn" data-person-id="${p.id}" type="button">✎</button>
-                        <button class="btn btn-danger btn-xs person-del-btn"    data-person-id="${p.id}" type="button">✕</button>
+                        <button class="btn btn-outlined btn-xs person-edit-btn" data-person-id="${p.id}" type="button" title="Редактировать">✎</button>
+                        <button class="btn btn-danger btn-xs person-del-btn"    data-person-id="${p.id}" type="button" title="Удалить">✕</button>
                     </div>
                 </td>
             </tr>`;
@@ -406,15 +443,27 @@ function cancelEditRow() {
 }
 
 async function saveEditRow(personId) {
-    const name = document.getElementById(`edit-name-${personId}`)?.value?.trim();
-    const rank = document.getElementById(`edit-rank-${personId}`)?.value?.trim();
-    const doc  = document.getElementById(`edit-doc-${personId}`)?.value?.trim();
-    const dept = document.getElementById(`edit-dept-${personId}`)?.value ?? undefined;
+    const name  = document.getElementById(`edit-name-${personId}`)?.value?.trim();
+    const rank  = document.getElementById(`edit-rank-${personId}`)?.value?.trim();
+    const doc   = document.getElementById(`edit-doc-${personId}`)?.value?.trim();
+    const pos   = document.getElementById(`edit-pos-${personId}`)?.value?.trim();
+    const birth = document.getElementById(`edit-birth-${personId}`)?.value?.trim();
+    const phone = document.getElementById(`edit-phone-${personId}`)?.value?.trim();
+    const notes = document.getElementById(`edit-notes-${personId}`)?.value?.trim();
+    const dept  = document.getElementById(`edit-dept-${personId}`)?.value ?? undefined;
 
     if (!name) { window.showSnackbar?.('ФИО не может быть пустым', 'error'); return; }
 
     try {
-        const payload = { full_name: name, rank: rank || null, doc_number: doc || null };
+        const payload = {
+            full_name: name,
+            rank: rank || null,
+            doc_number: doc || null,
+            position_title: pos || null,
+            birth_date: birth || null,
+            phone: phone || null,
+            notes: notes || null
+        };
         if (dept !== undefined) payload.department = dept || null;
 
         const updated = await api.put(`/persons/${personId}`, payload);
@@ -444,22 +493,6 @@ async function deletePerson(personId) {
 export function initPersonsTab() {
     const isAdmin = window.currentUserRole === 'admin';
 
-    // Показываем колонку «Управление» только админу
-    if (isAdmin) {
-        document.getElementById('persons-dept-col')?.classList.remove('hidden');
-        document.querySelector('.admin-only-field')?.classList.remove('hidden');
-        // Заполняем select управлений в форме добавления
-        const deptSelect = document.getElementById('person-dept');
-        if (deptSelect && window.availableRoles) {
-            window.availableRoles.forEach(r => {
-                const opt = document.createElement('option');
-                opt.value = r;
-                opt.textContent = formatRole(r);
-                deptSelect.appendChild(opt);
-            });
-        }
-    }
-
     // Поиск с дебаунсом
     document.getElementById('persons-search')?.addEventListener('input', (e) => {
         clearTimeout(_searchTimeout);
@@ -469,10 +502,9 @@ export function initPersonsTab() {
     // Импорт Excel
     const importBtn   = document.getElementById('persons-import-btn');
     const importInput = document.getElementById('persons-import-input');
-    const templateBtn = document.getElementById('persons-template-btn');   // ← новая кнопка
+    const templateBtn = document.getElementById('persons-template-btn');
 
     // Скачать шаблон
-    // ✅ СТАЛО — используем api.download() который уже добавляет Authorization: Bearer
     if (templateBtn) {
         templateBtn.addEventListener('click', async () => {
             try {
@@ -490,6 +522,8 @@ export function initPersonsTab() {
             }
         });
     }
+
+
 
     if (importBtn && importInput) {
         importBtn.addEventListener('click', () => importInput.click());
@@ -550,7 +584,7 @@ export function initPersonsTab() {
         const form = document.getElementById('persons-add-form');
         form?.classList.add('hidden');
         if (form) form.style.display = 'none';
-        ['person-fullname', 'person-rank', 'person-doc'].forEach(id => {
+        ['person-fullname', 'person-rank', 'person-doc', 'person-pos', 'person-birth', 'person-phone', 'person-notes'].forEach(id => {
             const el = document.getElementById(id);
             if (el) el.value = '';
         });
@@ -558,10 +592,14 @@ export function initPersonsTab() {
 
     // Сохранить новую запись
     document.getElementById('persons-save-btn')?.addEventListener('click', async () => {
-        const name = document.getElementById('person-fullname')?.value?.trim();
-        const rank = document.getElementById('person-rank')?.value?.trim();
-        const doc  = document.getElementById('person-doc')?.value?.trim();
-        const dept = isAdmin ? (document.getElementById('person-dept')?.value || null) : null;
+        const name  = document.getElementById('person-fullname')?.value?.trim();
+        const rank  = document.getElementById('person-rank')?.value?.trim();
+        const doc   = document.getElementById('person-doc')?.value?.trim();
+        const pos   = document.getElementById('person-pos')?.value?.trim();
+        const birth = document.getElementById('person-birth')?.value?.trim();
+        const phone = document.getElementById('person-phone')?.value?.trim();
+        const notes = document.getElementById('person-notes')?.value?.trim();
+        const dept  = isAdmin ? (document.getElementById('person-dept')?.value || null) : null;
 
         if (!name) { window.showSnackbar?.('Введите ФИО', 'error'); return; }
 
@@ -570,12 +608,19 @@ export function initPersonsTab() {
                 full_name:  name,
                 rank:       rank || null,
                 doc_number: doc  || null,
+                position_title: pos || null,
+                birth_date: birth || null,
+                phone:      phone || null,
+                notes:      notes || null,
                 department: dept,
             });
-            ['person-fullname', 'person-rank', 'person-doc'].forEach(id => {
+
+            // Очищаем все поля
+            ['person-fullname', 'person-rank', 'person-doc', 'person-pos', 'person-birth', 'person-phone', 'person-notes'].forEach(id => {
                 const el = document.getElementById(id);
                 if (el) el.value = '';
             });
+
             const form = document.getElementById('persons-add-form');
             form?.classList.add('hidden');
             if (form) form.style.display = 'none';

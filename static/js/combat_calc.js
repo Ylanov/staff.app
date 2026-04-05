@@ -190,18 +190,18 @@ function _renderInstanceList() {
                 : `border-color:var(--md-outline-variant); background:var(--md-background);`;
 
             html += `
-                <div class="cc-inst-card${isActive ? ' cc-inst-card--active' : ''}" data-inst-id="${inst.id}" style="padding: 8px; cursor:pointer; border:1px solid; border-radius:6px; transition: 0.2s; ${activeStyle}">
-                    <div style="font-size: 0.75rem; font-weight:600; color:var(--md-on-surface); margin-bottom:6px; line-height:1.2;">${_esc(inst.template_title)}</div>
-                    <div style="display:flex; justify-content:space-between; align-items:center;">
-                        <span class="cc-badge ${STATUS_CLASS[inst.status] || ''}" style="font-size:0.65rem;">${STATUS_LABEL[inst.status] || inst.status}</span>
-                        ${_isAdmin ? `
-                        <div style="display:flex; gap:4px;">
-                            <button class="btn btn-xs btn-outlined cc-status-btn" data-inst-id="${inst.id}" title="Сменить статус" style="padding:2px 6px; font-size:0.7rem;">⟳</button>
-                            <button class="btn btn-xs btn-danger cc-del-btn" data-inst-id="${inst.id}" title="Удалить" style="padding:2px 6px; font-size:0.7rem;">✕</button>
-                        </div>` : ''}
-                    </div>
+            <div class="cc-inst-card${isActive ? ' cc-inst-card--active' : ''}" data-inst-id="${inst.id}" style="border:1px solid; ${activeStyle}">
+                <div style="font-size: 0.75rem; font-weight:600; color:var(--md-on-surface); margin-bottom:2px; line-height:1.2;">${_esc(inst.template_title)}</div>
+                <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:4px;">
+                    <span class="cc-badge ${STATUS_CLASS[inst.status] || ''}" style="font-size:0.65rem; margin-bottom: 2px;">${STATUS_LABEL[inst.status] || inst.status}</span>
+                    ${_isAdmin ? `
+                    <div style="display:flex; gap:4px; margin-left:auto;">
+                        <button class="btn btn-xs btn-outlined cc-status-btn" data-inst-id="${inst.id}" title="Сменить статус" style="padding:2px 6px; font-size:0.7rem; flex-shrink:0;">⟳</button>
+                        <button class="btn btn-xs btn-danger cc-del-btn" data-inst-id="${inst.id}" title="Удалить" style="padding:2px 6px; font-size:0.7rem; flex-shrink:0;">✕</button>
+                    </div>` : ''}
                 </div>
-            `;
+            </div>
+        `;
         });
 
         // Строка быстрого создания расчёта (Только для Админа)

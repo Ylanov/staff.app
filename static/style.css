@@ -2489,11 +2489,17 @@ tr:hover .duty-grid__remove-person {
 }
 
 .cc-inst-card {
-    display: flex; align-items: center; gap: 6px;
-    padding: 7px 8px; border-radius: var(--md-radius-sm);
-    cursor: pointer; border: 1px solid transparent;
-    transition: background var(--md-duration-short);
-    margin-bottom: 3px;
+    display: flex;
+    flex-direction: column; /* Выстраиваем заголовок и кнопки вертикально */
+    align-items: stretch;   /* Растягиваем на всю ширину */
+    gap: 6px;
+    padding: 8px;
+    border-radius: var(--md-radius-sm);
+    cursor: pointer;
+    border: 1px solid transparent;
+    transition: all var(--md-duration-short);
+    margin-bottom: 4px;
+    overflow: hidden; /* Обрезаем всё, что пытается вылезти за края */
 }
 .cc-inst-card:hover { background: var(--md-surface-container); }
 .cc-inst-card--active {

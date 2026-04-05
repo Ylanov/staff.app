@@ -1,12 +1,8 @@
 // static/js/auth.js
 
 import { api } from './api.js';
-import { showView, formatRole, loadEventsDropdowns, setUserDisplay } from './ui.js';
+import { showView, formatRole, loadEventsDropdowns, setUserDisplay, showError } from './ui.js';
 import { initWebSocket, closeWebSocket } from './websockets.js';
-import { loadUsers, listenForUpdates as listenForAdminUpdates } from './admin.js';
-import { listenForUpdates as listenForDeptUpdates } from './department.js';
-import * as deptDuty   from './dept_duty.js';
-import * as combatCalc from './combat_calc.js';
 
 let isInitializing = false;
 
@@ -88,25 +84,34 @@ async function _doInitSession() {
     setUserDisplay(user.username);
     initWebSocket();
 
-    // Загружаем списки (бэкенд сам отфильтрует шаблоны для department)
     const dataPromises = [loadEventsDropdowns()];
-    if (user.role === 'admin') {
-        dataPromises.push(loadUsers());
-    }
-
-    const results = await Promise.allSettled(dataPromises);
-    results.forEach((result, i) => {
-        if (result.status === 'rejected') {
-            console.error(`Ошибка инициализации (задача ${i}):`, result.reason);
-        }
-    });
-
     const adminModeBtn = document.getElementById('admin-mode-btn');
 
+    // ─── ЛОГИКА ДЛЯ АДМИНИСТРАТОРА ───────────────────────────────────────────
     if (user.role === 'admin') {
         showView('admin-view');
-        listenForAdminUpdates();
-        listenForDeptUpdates(); // Админу нужны оба обработчика WS
+
+        // 1. Динамический импорт: загружаем модули "на лету"
+        const admin      = await import('./admin.js');
+        const department = await import('./department.js');
+        const combatCalc = await import('./combat_calc.js');
+        const dashboard  = await import('./dashboard.js');
+
+        // Добавляем специфичный для админа запрос в пул загрузки
+        dataPromises.push(admin.loadUsers());
+
+        // 2. Ждем выполнения всех сетевых запросов и обрабатываем ошибки
+        const results = await Promise.allSettled(dataPromises);
+        results.forEach((result, i) => {
+            if (result.status === 'rejected') {
+                console.error(`Ошибка инициализации (задача ${i}):`, result.reason);
+                showError('Сетевая ошибка при загрузке данных. Обновите страницу.');
+            }
+        });
+
+        // 3. Запускаем слушатели WS и рендер
+        admin.listenForUpdates();
+        department.listenForUpdates(); // Админу нужны оба обработчика WS
 
         if (adminModeBtn) {
             adminModeBtn.classList.remove('hidden');
@@ -117,15 +122,31 @@ async function _doInitSession() {
             `;
         }
 
-        // Инициализируем данные Боевого Расчёта для Админа
+        // Инициализируем данные Боевого Расчёта и Дашборд
         combatCalc.initCombatCalc(true);
+        dashboard.initDashboard();
 
+    // ─── ЛОГИКА ДЛЯ УПРАВЛЕНИЯ ───────────────────────────────────────────────
     } else {
         showView('department-view');
-        listenForDeptUpdates();
         if (adminModeBtn) adminModeBtn.classList.add('hidden');
 
-        // ✅ Инициализируем графики и Боевой Расчёт ТОЛЬКО после успешной авторизации
+        // 1. Динамический импорт: качаем только модули управления
+        const department = await import('./department.js');
+        const deptDuty   = await import('./dept_duty.js');
+        const combatCalc = await import('./combat_calc.js');
+
+        // 2. Ждем выполнения общих запросов (списки)
+        const results = await Promise.allSettled(dataPromises);
+        results.forEach((result, i) => {
+            if (result.status === 'rejected') {
+                console.error(`Ошибка инициализации (задача ${i}):`, result.reason);
+                showError('Сетевая ошибка при загрузке данных. Обновите страницу.');
+            }
+        });
+
+        // 3. Запускаем слушатели и инициализацию
+        department.listenForUpdates();
         combatCalc.initCombatCalc(false);
         await deptDuty.loadDeptDutyData();
     }

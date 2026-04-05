@@ -769,29 +769,51 @@
                          работает корректно. JS управляет показом через
                          form.style.display = 'flex' / classList.add('hidden')
                          ════════════════════════════════════════════════════════ -->
+                        <!-- Форма добавления -->
                     <div id="persons-add-form" class="hidden">
-                        <div class="field" style="flex:2; min-width:180px;">
-                            <label class="field-label" for="person-fullname">ФИО</label>
-                            <input type="text" id="person-fullname" placeholder="Иванов Иван Иванович" autocomplete="off">
+                        <!-- Первый ряд -->
+                        <div style="display:flex; gap:12px; width:100%; flex-wrap:wrap;">
+                            <div class="field" style="flex:2; min-width:180px;">
+                                <label class="field-label" for="person-fullname">ФИО</label>
+                                <input type="text" id="person-fullname" placeholder="Иванов Иван Иванович" autocomplete="off">
+                            </div>
+                            <div class="field" style="flex:1; min-width:130px;">
+                                <label class="field-label" for="person-rank">Звание</label>
+                                <input type="text" id="person-rank" placeholder="подполковник">
+                            </div>
+                            <div class="field" style="flex:1; min-width:130px;">
+                                <label class="field-label" for="person-doc">№ Документа</label>
+                                <input type="text" id="person-doc" placeholder="АБ123456">
+                            </div>
+                            <div class="field admin-only-field hidden" style="flex:1; min-width:160px;">
+                                <label class="field-label" for="person-dept">Управление</label>
+                                <select id="person-dept">
+                                    <option value="">— без управления —</option>
+                                </select>
+                            </div>
                         </div>
-                        <div class="field" style="flex:1; min-width:130px;">
-                            <label class="field-label" for="person-rank">Звание</label>
-                            <input type="text" id="person-rank" placeholder="подполковник">
-                        </div>
-                        <div class="field" style="flex:1; min-width:130px;">
-                            <label class="field-label" for="person-doc">№ Документа</label>
-                            <input type="text" id="person-doc" placeholder="АБ123456">
-                        </div>
-                        <!-- Управление — показывается только администратору через JS -->
-                        <div class="field admin-only-field hidden" style="flex:1; min-width:160px;">
-                            <label class="field-label" for="person-dept">Управление</label>
-                            <select id="person-dept">
-                                <option value="">— без управления —</option>
-                            </select>
-                        </div>
-                        <div style="display:flex; gap:8px; align-items:flex-end; padding-bottom:1px;">
-                            <button id="persons-save-btn"   class="btn btn-filled btn-sm"   type="button">Сохранить</button>
-                            <button id="persons-cancel-btn" class="btn btn-outlined btn-sm" type="button">Отмена</button>
+                        <!-- Второй ряд (доп. данные из Excel) -->
+                        <div style="display:flex; gap:12px; width:100%; flex-wrap:wrap; margin-top:8px;">
+                            <div class="field" style="flex:1; min-width:140px;">
+                                <label class="field-label" for="person-pos">Должность</label>
+                                <input type="text" id="person-pos" placeholder="Начальник отдела">
+                            </div>
+                            <div class="field" style="flex:1; min-width:120px;">
+                                <label class="field-label" for="person-birth">Дата рождения</label>
+                                <input type="date" id="person-birth">
+                            </div>
+                            <div class="field" style="flex:1; min-width:120px;">
+                                <label class="field-label" for="person-phone">Телефон</label>
+                                <input type="text" id="person-phone" placeholder="+7...">
+                            </div>
+                            <div class="field" style="flex:2; min-width:160px;">
+                                <label class="field-label" for="person-notes">Примечание</label>
+                                <input type="text" id="person-notes" placeholder="Доп. информация">
+                            </div>
+                            <div style="display:flex; gap:8px; align-items:flex-end; padding-bottom:1px; margin-left:auto;">
+                                <button id="persons-save-btn"   class="btn btn-filled btn-sm"   type="button">Сохранить</button>
+                                <button id="persons-cancel-btn" class="btn btn-outlined btn-sm" type="button">Отмена</button>
+                            </div>
                         </div>
                     </div>
 
@@ -801,11 +823,15 @@
                             <thead>
                                 <tr>
                                     <th style="width:44px;">ID</th>
-                                    <th>ФИО</th>
-                                    <th style="min-width:120px;">Звание</th>
-                                    <th style="min-width:120px;">№ Документа</th>
-                                    <th id="persons-dept-col" class="hidden" style="min-width:140px;">Управление</th>
-                                    <th style="width:80px;"></th>
+                                    <th style="min-width:180px;">ФИО</th>
+                                    <th style="min-width:100px;">Звание</th>
+                                    <th style="min-width:100px;">№ Док.</th>
+                                    <th id="persons-dept-col" class="hidden" style="min-width:120px;">Управление</th>
+                                    <th style="min-width:140px;">Должность</th>
+                                    <th style="min-width:90px;">Дата рожд.</th>
+                                    <th style="min-width:110px;">Телефон</th>
+                                    <th style="min-width:140px;">Примечание</th>
+                                    <th style="min-width:80px;"></th>
                                 </tr>
                             </thead>
                             <tbody id="persons-tbody"></tbody>
