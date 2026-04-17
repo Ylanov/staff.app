@@ -69,69 +69,93 @@ export function setUserDisplay(username) {
 // ─── Admin tabs ───────────────────────────────────────────────────────────────
 //
 // Порядок вкладок (индексы кнопок .tab-btn):
-//   0 → dashboard   (Дашборд)        ← НОВАЯ, первая
-//   1 → editor      (Редактор списков)
-//   2 → users       (Пользователи)
-//   3 → persons     (База людей)
-//   4 → duty        (Графики наряда)
-//   5 → combat      (Боевой расчёт)
+//   0 → dashboard   (Дашборд)
+//   1 → editor      (Редактор шаблонов)
+//   2 → history     (История — рабочие списки по датам)
+//   3 → users       (Пользователи)
+//   4 → persons     (База людей)
+//   5 → duty        (Графики наряда)
+//   6 → combat      (Боевой расчёт)
+//   7 → calendar    (Календарь задач)
+
+let _tasksAdminInited = false;
 
 export function switchAdminTab(tab) {
     const tabDashboard = document.getElementById('tab-dashboard');
     const tabEditor    = document.getElementById('tab-editor');
+    const tabHistory   = document.getElementById('tab-history');
     const tabUsers     = document.getElementById('tab-users');
     const tabPersons   = document.getElementById('tab-persons');
     const tabDuty      = document.getElementById('tab-duty');
     const tabCombat    = document.getElementById('tab-combat');
+    const tabCalendar  = document.getElementById('tab-calendar');
     const tabBtns      = document.querySelectorAll('.tab-btn');
 
     // Скрываем все вкладки и сбрасываем кнопки
     tabDashboard?.classList.add('hidden');
     tabEditor?.classList.add('hidden');
+    tabHistory?.classList.add('hidden');
     tabUsers?.classList.add('hidden');
     tabPersons?.classList.add('hidden');
     tabDuty?.classList.add('hidden');
     tabCombat?.classList.add('hidden');
+    tabCalendar?.classList.add('hidden');
     tabBtns.forEach(btn => {
         btn.classList.remove('active');
         btn.setAttribute('aria-selected', 'false');
     });
 
+    const activate = (idx) => {
+        tabBtns[idx]?.classList.add('active');
+        tabBtns[idx]?.setAttribute('aria-selected', 'true');
+    };
+
     if (tab === 'dashboard') {
         tabDashboard?.classList.remove('hidden');
-        tabBtns[0]?.classList.add('active');
-        tabBtns[0]?.setAttribute('aria-selected', 'true');
-        // Загружаем дашборд при переключении на вкладку
+        activate(0);
         import('./dashboard.js').then(m => m.loadDashboard()).catch(() => {});
 
     } else if (tab === 'editor') {
         tabEditor?.classList.remove('hidden');
-        tabBtns[1]?.classList.add('active');
-        tabBtns[1]?.setAttribute('aria-selected', 'true');
+        activate(1);
+
+    } else if (tab === 'history') {
+        tabHistory?.classList.remove('hidden');
+        activate(2);
+        import('./history.js').then(m => m.loadHistory()).catch(err => {
+            console.error('history load:', err);
+        });
 
     } else if (tab === 'users') {
         tabUsers?.classList.remove('hidden');
-        tabBtns[2]?.classList.add('active');
-        tabBtns[2]?.setAttribute('aria-selected', 'true');
+        activate(3);
 
     } else if (tab === 'persons') {
         tabPersons?.classList.remove('hidden');
-        tabBtns[3]?.classList.add('active');
-        tabBtns[3]?.setAttribute('aria-selected', 'true');
+        activate(4);
         loadPersons();
 
     } else if (tab === 'duty') {
         tabDuty?.classList.remove('hidden');
-        tabBtns[4]?.classList.add('active');
-        tabBtns[4]?.setAttribute('aria-selected', 'true');
-        // Динамический импорт чтобы избежать circular deps
+        activate(5);
         import('./duty.js').then(m => m.loadSchedules());
 
     } else if (tab === 'combat') {
         tabCombat?.classList.remove('hidden');
-        tabBtns[5]?.classList.add('active');
-        tabBtns[5]?.setAttribute('aria-selected', 'true');
+        activate(6);
         import('./combat_calc.js').then(m => m.initCombatCalc(true));
+
+    } else if (tab === 'calendar') {
+        tabCalendar?.classList.remove('hidden');
+        activate(7);
+        import('./tasks.js').then(m => {
+            if (!_tasksAdminInited) {
+                m.initTasks('tasks-root', true);
+                _tasksAdminInited = true;
+            } else {
+                m.reloadTasks();
+            }
+        });
     }
 }
 
@@ -154,34 +178,54 @@ export async function loadEventsDropdowns() {
         const templates = events.filter(e => e.is_template);
         const regular   = events.filter(e => !e.is_template);
 
-        // Формируем красивые группы для обычных меню
-        let generalOptions = '<option value="" disabled selected>— Выберите список —</option>';
-
-        if (regular.length > 0) {
-            generalOptions += '<optgroup label="Рабочие списки">';
-            generalOptions += regular
+        // ── Опции для РЕДАКТОРА списков — ТОЛЬКО ШАБЛОНЫ ─────────────────────
+        // В редакторе работаем только с шаблонами. Рабочие списки генерируются
+        // из шаблонов через расписание и отправляются в "Историю" после даты.
+        let templateOnlyOptions = '<option value="" disabled selected>— Выберите шаблон —</option>';
+        if (templates.length === 0) {
+            templateOnlyOptions += '<option disabled>Нет шаблонов — создайте первый</option>';
+        } else {
+            templateOnlyOptions += templates
                 .map(e => `<option value="${e.id}">${e.title}</option>`)
                 .join('');
-            generalOptions += '</optgroup>';
-        }
-
-        if (templates.length > 0) {
-            generalOptions += '<optgroup label="Шаблоны (для редактирования)">';
-            generalOptions += templates
-                .map(e => `<option value="${e.id}">[Шаблон] ${e.title}</option>`)
-                .join('');
-            generalOptions += '</optgroup>';
         }
 
         [
-            'dept-event-id',
             'group-event-id',
-            'export-event-id',
             'editor-event-id',
         ].forEach(id => {
             const el = document.getElementById(id);
-            if (el) el.innerHTML = generalOptions;
+            if (el) el.innerHTML = templateOnlyOptions;
         });
+
+        // ── Опции для выгрузки .docx — шаблоны + рабочие списки ─────────────
+        // Экспорт может быть полезен и для текущих, и для шаблонных списков.
+        let exportOptions = '<option value="" disabled selected>— Выберите список —</option>';
+        if (regular.length > 0) {
+            exportOptions += '<optgroup label="Рабочие списки (по датам)">';
+            exportOptions += regular
+                .map(e => `<option value="${e.id}">${e.title}</option>`)
+                .join('');
+            exportOptions += '</optgroup>';
+        }
+        if (templates.length > 0) {
+            exportOptions += '<optgroup label="Шаблоны">';
+            exportOptions += templates
+                .map(e => `<option value="${e.id}">[Шаблон] ${e.title}</option>`)
+                .join('');
+            exportOptions += '</optgroup>';
+        }
+
+        const exportSelect = document.getElementById('export-event-id');
+        if (exportSelect) exportSelect.innerHTML = exportOptions;
+
+        // Dept select — все рабочие списки для управлений
+        const deptSelect = document.getElementById('dept-event-id');
+        if (deptSelect) {
+            let deptOpts = '<option value="" disabled selected>— Выберите список —</option>';
+            deptOpts += regular.map(e => `<option value="${e.id}">${e.title}</option>`).join('');
+            deptSelect.innerHTML = deptOpts;
+        }
 
         // Карточки для department view
         renderDeptEventCards(regular);
@@ -309,8 +353,10 @@ export function updateDeptCardProgress(eventId, slots) {
 // ─── База людей (admin: вкладка «База людей») ─────────────────────────────────
 
 let _personsData   = [];
+let _personsFiltered = [];
 let _editingId     = null;
 let _searchTimeout = null;
+let _personsDeptFilter = ''; // активный фильтр по управлению (admin only)
 
 export async function loadPersons(searchQuery = '') {
     const tbody = document.getElementById('persons-tbody');
@@ -322,7 +368,13 @@ export async function loadPersons(searchQuery = '') {
     const isAdmin = window.currentUserRole === 'admin';
     if (isAdmin) {
         document.getElementById('persons-dept-col')?.classList.remove('hidden');
-        document.querySelector('.admin-only-field')?.classList.remove('hidden');
+        // Раскрываем ВСЕ admin-only поля (селект в форме + фильтр в тулбаре)
+        document.querySelectorAll('.admin-only-field').forEach(el => el.classList.remove('hidden'));
+        const statsBar = document.getElementById('persons-stats');
+        if (statsBar) {
+            statsBar.classList.remove('hidden');
+            statsBar.style.display = 'flex';
+        }
 
         // Заполняем выпадающий список управлений в форме добавления
         const deptSelect = document.getElementById('person-dept');
@@ -334,13 +386,24 @@ export async function loadPersons(searchQuery = '') {
                 deptSelect.appendChild(opt);
             });
         }
+
+        // Заполняем фильтр по управлению теми же значениями
+        const filterDept = document.getElementById('persons-filter-dept');
+        if (filterDept && filterDept.options.length <= 1 && window.availableRoles) {
+            window.availableRoles.forEach(r => {
+                const opt = document.createElement('option');
+                opt.value = r;
+                opt.textContent = formatRole(r);
+                filterDept.appendChild(opt);
+            });
+        }
     }
     // -----------------------------------------------------------
 
     try {
         const params = searchQuery ? `?q=${encodeURIComponent(searchQuery)}&limit=500` : '?limit=500';
         _personsData = await api.get(`/persons${params}`);
-        renderPersonsTable(_personsData);
+        _applyPersonsFilters();
         empty?.classList.toggle('hidden', _personsData.length > 0);
     } catch (err) {
         console.error('loadPersons:', err);
@@ -348,6 +411,27 @@ export async function loadPersons(searchQuery = '') {
             window.showSnackbar('Ошибка загрузки базы людей', 'error');
         }
     }
+}
+
+function _applyPersonsFilters() {
+    if (_personsDeptFilter) {
+        _personsFiltered = _personsData.filter(p => (p.department || '') === _personsDeptFilter);
+    } else {
+        _personsFiltered = _personsData;
+    }
+    renderPersonsTable(_personsFiltered);
+    _updatePersonsStats();
+}
+
+function _updatePersonsStats() {
+    const total     = _personsData.length;
+    const visible   = _personsFiltered.length;
+    const depts     = new Set(_personsData.map(p => p.department).filter(Boolean)).size;
+
+    const set = (id, v) => { const el = document.getElementById(id); if (el) el.textContent = v; };
+    set('persons-stat-total',   total);
+    set('persons-stat-visible', visible);
+    set('persons-stat-depts',   depts);
 }
 
 function esc(v) {
@@ -433,13 +517,13 @@ function renderPersonsTable(persons) {
 function startEditRow(personId) {
     if (_editingId && _editingId !== personId) cancelEditRow();
     _editingId = personId;
-    renderPersonsTable(_personsData);
+    renderPersonsTable(_personsFiltered);
     setTimeout(() => document.getElementById(`edit-name-${personId}`)?.focus(), 50);
 }
 
 function cancelEditRow() {
     _editingId = null;
-    renderPersonsTable(_personsData);
+    renderPersonsTable(_personsFiltered);
 }
 
 async function saveEditRow(personId) {
@@ -470,7 +554,7 @@ async function saveEditRow(personId) {
         const idx = _personsData.findIndex(p => p.id === personId);
         if (idx !== -1) _personsData[idx] = updated;
         _editingId = null;
-        renderPersonsTable(_personsData);
+        _applyPersonsFilters();
         window.showSnackbar?.('Сохранено', 'success');
     } catch (err) {
         window.showSnackbar?.('Ошибка сохранения', 'error');
@@ -482,7 +566,7 @@ async function deletePerson(personId) {
     try {
         await api.delete(`/persons/${personId}`);
         _personsData = _personsData.filter(p => p.id !== personId);
-        renderPersonsTable(_personsData);
+        _applyPersonsFilters();
         document.getElementById('persons-empty')?.classList.toggle('hidden', _personsData.length > 0);
         window.showSnackbar?.('Удалено', 'success');
     } catch (err) {
@@ -497,6 +581,17 @@ export function initPersonsTab() {
     document.getElementById('persons-search')?.addEventListener('input', (e) => {
         clearTimeout(_searchTimeout);
         _searchTimeout = setTimeout(() => loadPersons(e.target.value.trim()), 300);
+    });
+
+    // Фильтр по управлению (только для админа)
+    document.getElementById('persons-filter-dept')?.addEventListener('change', (e) => {
+        _personsDeptFilter = e.target.value || '';
+        _applyPersonsFilters();
+    });
+
+    // Экспорт видимых записей в Excel
+    document.getElementById('persons-export-btn')?.addEventListener('click', () => {
+        _exportPersonsToExcel(_personsFiltered);
     });
 
     // Импорт Excel
@@ -643,6 +738,49 @@ export function initPersonsTab() {
         if (saveEdit)   saveEditRow(parseInt(saveEdit.dataset.personId));
         if (cancelEdit) cancelEditRow();
     });
+}
+
+// ─── Экспорт базы людей в CSV (открывается в Excel) ──────────────────────────
+
+function _exportPersonsToExcel(persons) {
+    if (!persons || persons.length === 0) {
+        window.showSnackbar?.('Нет записей для экспорта', 'error');
+        return;
+    }
+
+    const isAdmin = window.currentUserRole === 'admin';
+    const headers = ['ФИО', 'Звание', '№ Документа'];
+    if (isAdmin) headers.push('Управление');
+    headers.push('Должность', 'Дата рождения', 'Телефон', 'Примечание');
+
+    const escapeCSV = (v) => {
+        if (v == null) return '';
+        const s = String(v);
+        if (s.includes(';') || s.includes('"') || s.includes('\n')) {
+            return '"' + s.replace(/"/g, '""') + '"';
+        }
+        return s;
+    };
+
+    const rows = persons.map(p => {
+        const cols = [p.full_name, p.rank || '', p.doc_number || ''];
+        if (isAdmin) cols.push(p.department ? formatRole(p.department) : '');
+        cols.push(p.position_title || '', p.birth_date || '', p.phone || '', p.notes || '');
+        return cols.map(escapeCSV).join(';');
+    });
+
+    // BOM для корректной кодировки в Excel
+    const csv = '\uFEFF' + headers.join(';') + '\n' + rows.join('\n');
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
+    const url  = URL.createObjectURL(blob);
+    const now  = new Date();
+    const fname = `База_людей_${now.getFullYear()}${String(now.getMonth()+1).padStart(2,'0')}${String(now.getDate()).padStart(2,'0')}.csv`;
+    const a = Object.assign(document.createElement('a'), { href: url, download: fname });
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+    window.showSnackbar?.(`Экспортировано ${persons.length} записей`, 'success');
 }
 
 // ─── Модальное окно с ошибками импорта ───────────────────────────────────────

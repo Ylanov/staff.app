@@ -127,6 +127,15 @@
                         </svg>
                         Боевой расчёт
                     </button>
+                    <button id="dept-tasks-tab-btn" class="btn btn-outlined btn-sm" type="button">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                             stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right:4px;">
+                            <rect x="3" y="4" width="18" height="18" rx="2"/>
+                            <path d="M16 2v4M8 2v4M3 10h18"/>
+                            <path d="M9 16l2 2 4-4"/>
+                        </svg>
+                        Календарь
+                    </button>
                 </div>
             </div>
 
@@ -263,6 +272,11 @@
                 </div>
             </div>
 
+            <!-- Зона Календаря задач (Для управлений) -->
+            <div id="dept-tasks-panel" class="hidden" style="margin-top:24px;">
+                <div id="tasks-root-dept" data-role="department"></div>
+            </div>
+
             <!-- Зона Боевого расчёта (Для управлений) -->
             <div id="dept-combat-calc" class="hidden" style="margin-top:24px;">
 
@@ -338,7 +352,11 @@
                 </button>
                 <button class="tab-btn"
                         role="tab" aria-selected="false" aria-controls="tab-editor" type="button">
-                    Редактор списков
+                    Редактор шаблонов
+                </button>
+                <button class="tab-btn"
+                        role="tab" aria-selected="false" aria-controls="tab-history" type="button">
+                    История
                 </button>
                 <button class="tab-btn"
                         role="tab" aria-selected="false" aria-controls="tab-users" type="button">
@@ -355,6 +373,10 @@
                 <button class="tab-btn"
                         role="tab" aria-selected="false" aria-controls="tab-combat" type="button">
                     Боевой расчёт
+                </button>
+                <button class="tab-btn"
+                        role="tab" aria-selected="false" aria-controls="tab-calendar" type="button">
+                    Календарь
                 </button>
             </nav>
 
@@ -413,7 +435,10 @@
             </div><!-- /#tab-dashboard -->
 
             <!-- ══════════════════════════════════════════════════════════════
-                 Tab: Редактор списков
+                 Tab: Редактор шаблонов
+                 В редакторе доступны только шаблоны. Рабочие списки по датам
+                 генерируются из шаблонов через «Расписание» и после даты
+                 уходят во вкладку «История».
                  ══════════════════════════════════════════════════════════════ -->
             <div id="tab-editor" class="hidden" role="tabpanel">
 
@@ -499,21 +524,22 @@
 
                     </div>
 
-                    <!-- Панель: Новый список -->
+                    <!-- Панель: Новый шаблон -->
                     <div class="tools-panel" id="panel-new-list">
                         <div class="tools-panel__inner">
                             <div class="tools-panel__row">
                                 <div class="field" style="flex:1; min-width:200px; max-width:320px;">
-                                    <label class="field-label" for="event-title">Название списка</label>
+                                    <label class="field-label" for="event-title">Название шаблона</label>
                                     <input type="text" id="event-title" placeholder="Например: АМГ 1 эшелон">
                                 </div>
-                                <label class="tools-checkbox-label">
-                                    <input type="checkbox" id="event-is-template">
-                                    <span>Сохранить как шаблон</span>
-                                </label>
+                                <!-- Скрытый чекбокс — в редакторе всегда создаём шаблоны -->
+                                <input type="checkbox" id="event-is-template" checked class="hidden">
                                 <button id="create-event-btn" class="btn btn-success btn-sm" type="button">
-                                    Создать список
+                                    + Создать шаблон
                                 </button>
+                                <span style="font-size:0.72rem; color:var(--md-on-surface-hint); margin-left:8px;">
+                                    Шаблон → Расписание → Рабочие списки
+                                </span>
                             </div>
                         </div>
                     </div>
@@ -622,17 +648,18 @@
                 <div class="editor-panel">
                     <div class="editor-toolbar">
                         <div class="editor-toolbar__left">
-                            <span class="card-title">Главная таблица</span>
-                            <span class="card-subtitle">Выберите список и нажмите «Загрузить»</span>
+                            <span class="card-title">Редактор шаблонов</span>
+                            <span class="card-subtitle">Выберите шаблон — откроется автоматически. Готовые списки по датам — во вкладке «История».</span>
                         </div>
                         <div class="editor-toolbar__right">
-                            <div class="select-field" style="min-width:220px;">
-                                <label class="field-label" for="editor-event-id">Список</label>
+                            <div class="select-field" style="min-width:260px;">
+                                <label class="field-label" for="editor-event-id">Шаблон</label>
                                 <select id="editor-event-id"></select>
                             </div>
-                            <button id="load-editor-btn" class="btn btn-filled btn-sm" type="button"
-                                    style="margin-top:18px; flex-shrink:0;">
-                                Загрузить
+                            <!-- Кнопка оставлена как страховка (ручная перезагрузка) -->
+                            <button id="load-editor-btn" class="btn btn-outlined btn-sm" type="button"
+                                    style="margin-top:18px; flex-shrink:0;" title="Перезагрузить выбранный шаблон">
+                                ↻
                             </button>
                         </div>
                     </div>
@@ -660,6 +687,48 @@
                             </div>
                         </div>
 
+                        <!-- Toolbar внутри редактора: поиск, статистика, массовые действия -->
+                        <div id="editor-subtoolbar" style="display:flex; align-items:center;
+                             justify-content:space-between; flex-wrap:wrap; gap:10px;
+                             padding:10px 18px; background:var(--md-surface-variant);
+                             border-bottom:1px solid var(--md-outline-variant);">
+                            <div style="display:flex; align-items:center; gap:8px; flex:1; max-width:380px;">
+                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                     stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+                                     style="flex-shrink:0; color:var(--md-on-surface-hint);">
+                                    <circle cx="11" cy="11" r="8"/>
+                                    <path d="M21 21l-4.35-4.35"/>
+                                </svg>
+                                <input type="text" id="editor-search-input"
+                                       placeholder="Быстрый поиск: ФИО, должность, позывной…"
+                                       autocomplete="off"
+                                       style="flex:1; border:1px solid var(--md-outline-variant);
+                                              background:var(--md-surface); padding:5px 8px;
+                                              border-radius:var(--md-radius-sm); font-size:0.82rem;
+                                              outline:none; color:var(--md-on-surface);">
+                                <select id="editor-filter-dept" title="Фильтр по управлению"
+                                        style="border:1px solid var(--md-outline-variant);
+                                               background:var(--md-surface); padding:5px 6px;
+                                               border-radius:var(--md-radius-sm); font-size:0.78rem;
+                                               min-width:140px; cursor:pointer;
+                                               color:var(--md-on-surface);">
+                                    <option value="">Все управления</option>
+                                </select>
+                                <button id="editor-filter-unfilled" class="btn btn-outlined btn-xs" type="button"
+                                        title="Показать только незаполненные строки (без ФИО)"
+                                        style="white-space:nowrap;">Пустые</button>
+                                <button id="editor-filter-clear" class="btn btn-text btn-xs" type="button"
+                                        title="Сбросить фильтры" style="white-space:nowrap;">✕</button>
+                            </div>
+                            <div style="display:flex; gap:10px; align-items:center; font-size:0.78rem;
+                                        color:var(--md-on-surface-variant);">
+                                <span id="editor-stats-total" title="Всего строк">Всего: —</span>
+                                <span id="editor-stats-filled" title="Заполнено (есть ФИО)" style="color:var(--md-success, #1D9E75);">✓ —</span>
+                                <span id="editor-stats-empty" title="Пустые строки" style="color:var(--md-warning, #BA7517);">○ —</span>
+                                <span id="editor-stats-visible" title="Видимо с учётом фильтров" class="hidden">Показано: —</span>
+                            </div>
+                        </div>
+
                         <div class="data-table-wrap">
                             <table id="master-table">
                                 <thead id="master-thead"><tr></tr></thead>
@@ -675,11 +744,103 @@
                             <rect x="3" y="3" width="18" height="18" rx="2"/>
                             <path d="M3 9h18M9 21V9"/>
                         </svg>
-                        <p style="font-size:.875rem; color:var(--md-on-surface-hint);">Выберите список для загрузки редактора</p>
+                        <p style="font-size:.92rem; color:var(--md-on-surface); margin-bottom:6px; font-weight:500;">
+                            Выберите шаблон в выпадающем меню сверху
+                        </p>
+                        <p style="font-size:.8rem; color:var(--md-on-surface-hint); line-height:1.5; max-width:440px; margin:0 auto;">
+                            Если шаблонов ещё нет — создайте первый через кнопку
+                            <b>«+ Новый список»</b> в панели инструментов выше.
+                            <br>Готовые списки по датам находятся во вкладке <b>«История»</b>.
+                        </p>
                     </div>
                 </div>
 
             </div><!-- /#tab-editor -->
+
+            <!-- ══════════════════════════════════════════════════════════════
+                 Tab: История
+                 Все списки по датам (is_template=false) — архив того что уже
+                 было сгенерировано из шаблонов. Списки, у которых дата прошла,
+                 автоматически отображаются в разделе «Прошедшие».
+                 ══════════════════════════════════════════════════════════════ -->
+            <div id="tab-history" class="hidden" role="tabpanel">
+                <div class="persons-panel">
+
+                    <!-- Тулбар истории -->
+                    <div style="display:flex; align-items:center; justify-content:space-between;
+                                flex-wrap:wrap; gap:12px; padding:16px 20px;
+                                border-bottom:1px solid var(--md-outline-variant);">
+                        <div style="display:flex; align-items:center; gap:8px; flex:1; max-width:420px;">
+                            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                 stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+                                 style="flex-shrink:0; color:var(--md-on-surface-hint);">
+                                <circle cx="11" cy="11" r="8"/>
+                                <path d="M21 21l-4.35-4.35"/>
+                            </svg>
+                            <input type="text" id="history-search-input" placeholder="Поиск по названию списка…" autocomplete="off"
+                                   style="flex:1; border:none; background:transparent; font-size:0.88rem; outline:none; color:var(--md-on-surface);">
+                        </div>
+                        <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+                            <div class="select-field" style="min-width:170px;">
+                                <label class="field-label" for="history-filter-period" style="font-size:0.7rem;">Период</label>
+                                <select id="history-filter-period" style="padding:5px 8px; font-size:0.82rem;">
+                                    <option value="all">Все даты</option>
+                                    <option value="upcoming">Предстоящие</option>
+                                    <option value="past" selected>Прошедшие</option>
+                                    <option value="today">Сегодня</option>
+                                    <option value="week">Последние 7 дней</option>
+                                    <option value="month">Последние 30 дней</option>
+                                </select>
+                            </div>
+                            <button id="history-refresh-btn" class="btn btn-outlined btn-sm" type="button" title="Обновить">
+                                ↻ Обновить
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- Статистика -->
+                    <div id="history-stats" style="display:flex; gap:16px; padding:10px 20px;
+                                background:var(--md-surface-variant);
+                                border-bottom:1px solid var(--md-outline-variant);
+                                font-size:0.8rem; color:var(--md-on-surface-variant); flex-wrap:wrap;">
+                        <span>Всего: <b id="history-stat-total">—</b></span>
+                        <span style="color:var(--md-success, #1D9E75);">Прошедшие: <b id="history-stat-past">—</b></span>
+                        <span style="color:var(--md-primary);">Предстоящие: <b id="history-stat-upcoming">—</b></span>
+                        <span style="color:var(--md-warning, #BA7517);">Сегодня: <b id="history-stat-today">—</b></span>
+                    </div>
+
+                    <!-- Таблица списков -->
+                    <div class="data-table-wrap">
+                        <table id="history-table">
+                            <thead>
+                                <tr>
+                                    <th style="width:44px;">ID</th>
+                                    <th style="min-width:200px;">Название</th>
+                                    <th style="min-width:130px;">Дата</th>
+                                    <th style="min-width:120px;">День недели</th>
+                                    <th style="min-width:100px;">Статус</th>
+                                    <th style="min-width:110px;">Заполнение</th>
+                                    <th style="min-width:180px;">Действия</th>
+                                </tr>
+                            </thead>
+                            <tbody id="history-tbody">
+                                <tr><td colspan="7" style="text-align:center; padding:32px; color:var(--md-on-surface-hint);">Загрузка…</td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+
+                    <!-- Пустое состояние -->
+                    <div id="history-empty" class="persons-empty hidden">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4"
+                             stroke-linecap="round" stroke-linejoin="round">
+                            <rect x="3" y="4" width="18" height="18" rx="2" ry="2"/>
+                            <path d="M16 2v4M8 2v4M3 10h18"/>
+                        </svg>
+                        <p>Список пуст</p>
+                        <span>Когда шаблоны будут развёрнуты на даты, списки появятся здесь</span>
+                    </div>
+                </div>
+            </div><!-- /#tab-history -->
 
             <!-- ══════════════════════════════════════════════════════════════
                  Tab: Пользователи
@@ -733,23 +894,36 @@
             <div id="tab-persons" class="hidden" role="tabpanel">
                 <div class="persons-panel">
 
-                    <!-- Тулбар: поиск + кнопки -->
+                    <!-- Тулбар: поиск + фильтры + кнопки -->
                     <div style="display:flex; align-items:center; justify-content:space-between;
                                 flex-wrap:wrap; gap:12px; padding:16px 20px;
                                 border-bottom:1px solid var(--md-outline-variant);">
-                        <div style="display:flex; align-items:center; gap:8px; flex:1; max-width:400px;">
-                            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-                                 stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
-                                 style="flex-shrink:0; color:var(--md-on-surface-hint);">
-                                <circle cx="11" cy="11" r="8"/>
-                                <path d="M21 21l-4.35-4.35"/>
-                            </svg>
-                            <input type="text" id="persons-search" placeholder="Поиск по ФИО…" autocomplete="off"
-                                   style="flex:1; border:none; background:transparent; font-size:0.88rem; outline:none; color:var(--md-on-surface);">
+                        <div style="display:flex; align-items:center; gap:10px; flex:1; flex-wrap:wrap;">
+                            <div style="display:flex; align-items:center; gap:8px; flex:1; min-width:220px; max-width:360px;">
+                                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                     stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+                                     style="flex-shrink:0; color:var(--md-on-surface-hint);">
+                                    <circle cx="11" cy="11" r="8"/>
+                                    <path d="M21 21l-4.35-4.35"/>
+                                </svg>
+                                <input type="text" id="persons-search" placeholder="Поиск по ФИО…" autocomplete="off"
+                                       style="flex:1; border:none; background:transparent; font-size:0.88rem; outline:none; color:var(--md-on-surface);">
+                            </div>
+                            <!-- Фильтр по управлению (только для админа) -->
+                            <select id="persons-filter-dept" class="admin-only-field hidden" title="Фильтр по управлению"
+                                    style="border:1px solid var(--md-outline-variant); background:var(--md-surface);
+                                           padding:5px 8px; border-radius:var(--md-radius-sm);
+                                           font-size:0.82rem; outline:none; cursor:pointer; min-width:170px;
+                                           color:var(--md-on-surface);">
+                                <option value="">Все управления</option>
+                            </select>
                         </div>
                         <div style="display:flex; gap:8px; flex-wrap:wrap;">
                             <input type="file" id="persons-import-input" accept=".xlsx,.xls" class="hidden">
-                            <!-- ↓ Кнопка скачать шаблон -->
+                            <button id="persons-export-btn" class="btn btn-outlined btn-sm" type="button"
+                                    title="Выгрузить видимые записи в Excel">
+                                ⬇ Экспорт
+                            </button>
                             <button id="persons-template-btn" class="btn btn-outlined btn-sm" type="button"
                                     title="Скачать шаблон Excel для заполнения">
                                 ⬇ Шаблон
@@ -761,6 +935,16 @@
                                 + Добавить
                             </button>
                         </div>
+                    </div>
+
+                    <!-- Стат. строка для админа -->
+                    <div id="persons-stats" class="hidden" style="display:none; gap:16px; padding:8px 20px;
+                                background:var(--md-surface-variant);
+                                border-bottom:1px solid var(--md-outline-variant);
+                                font-size:0.78rem; color:var(--md-on-surface-variant); flex-wrap:wrap;">
+                        <span>Всего: <b id="persons-stat-total">—</b></span>
+                        <span>Показано: <b id="persons-stat-visible">—</b></span>
+                        <span>Управлений: <b id="persons-stat-depts">—</b></span>
                     </div>
 
                     <!-- ════════════════════════════════════════════════════════
@@ -992,6 +1176,18 @@
 
                     <div class="tools-panel open" id="cc-panel-calendar-admin">
                         <div class="tools-panel__inner" style="padding-bottom:16px;">
+                            <!-- Статистика боевых расчётов -->
+                            <div id="cc-stats-admin" style="display:flex; gap:14px; padding:8px 10px; margin-bottom:10px;
+                                        background:var(--md-surface-variant); border-radius:var(--md-radius-sm);
+                                        font-size:0.78rem; color:var(--md-on-surface-variant); flex-wrap:wrap; align-items:center;">
+                                <span><b>Неделя:</b></span>
+                                <span title="Всего расчётов">Всего: <b id="cc-stat-total">—</b></span>
+                                <span title="В статусе Активен" style="color:var(--md-primary);">Активные: <b id="cc-stat-active">—</b></span>
+                                <span title="В статусе Черновик" style="color:var(--md-warning, #BA7517);">Черновики: <b id="cc-stat-draft">—</b></span>
+                                <span title="В статусе Закрыт" style="color:var(--md-on-surface-hint);">Закрытые: <b id="cc-stat-closed">—</b></span>
+                                <span style="margin-left:auto; font-size:0.72rem; color:var(--md-on-surface-hint);">Шаблонов: <b id="cc-stat-templates">—</b></span>
+                            </div>
+
                             <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:16px;">
                                 <button id="cc-prev-week-admin" class="btn btn-outlined btn-xs" type="button">← Пред.</button>
                                 <div style="display:flex; flex-direction:column; align-items:center; min-width:130px;">
@@ -1024,6 +1220,13 @@
                 </div>
 
             </div><!-- /#tab-combat -->
+
+            <!-- ══════════════════════════════════════════════════════════════
+                 Tab: Календарь задач (админ — сводный вид по всем)
+                 ══════════════════════════════════════════════════════════════ -->
+            <div id="tab-calendar" class="hidden" role="tabpanel">
+                <div id="tasks-root" data-role="admin"></div>
+            </div><!-- /#tab-calendar -->
 
         </div><!-- /.page -->
     </div><!-- /#admin-view -->

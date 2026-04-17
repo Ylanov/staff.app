@@ -16,6 +16,7 @@ from app.api.v1.routers import combat_calc
 from app.api.v1.routers import settings as settings_router
 from app.api.v1.routers import dept_duty
 from app.api.v1.routers import dashboard
+from app.api.v1.routers import tasks
 from app.db.init_db import init_db
 from app.core.websockets import manager, handle_websocket_connection
 
@@ -83,6 +84,7 @@ app.include_router(settings_router.router, prefix="/api/v1/settings",tags=["На
 app.include_router(duty.router,            prefix="/api/v1/admin",   tags=["Графики наряда"])
 app.include_router(dashboard.router,       prefix="/api/v1/admin",   tags=["Дашборд"])
 app.include_router(dept_duty.router,       prefix="/api/v1/dept",    tags=["Графики наряда (управление)"])
+app.include_router(tasks.router,           prefix="/api/v1/tasks",   tags=["Календарь задач"])
 
 # ─── Боевой расчёт ────────────────────────────────────────────────────────────
 # ИСПРАВЛЕНО: раньше один и тот же роутер подключался дважды с разными prefix,

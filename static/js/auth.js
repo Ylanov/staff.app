@@ -159,5 +159,11 @@ export function logout() {
     localStorage.removeItem('token');
     closeWebSocket();
     window.currentUserRole = null;
+
+    // Останавливаем автообновление дашборда если оно было запущено
+    import('./dashboard.js')
+        .then(m => m.stopDashboard?.())
+        .catch(() => { /* игнорируем */ });
+
     showView('login-view');
 }

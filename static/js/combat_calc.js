@@ -124,6 +124,31 @@ async function _loadTemplates() {
     }
 }
 
+// Статистика для шапки (только админ)
+function _updateAdminStats() {
+    // Считаем по текущей неделе (от _currentWeekStart на 7 дней)
+    const start = new Date(_currentWeekStart);
+    const end   = new Date(_currentWeekStart);
+    end.setDate(end.getDate() + 7);
+
+    const inWeek = _instances.filter(inst => {
+        const d = new Date(inst.calc_date + 'T00:00:00');
+        return d >= start && d < end;
+    });
+
+    const total  = inWeek.length;
+    const active = inWeek.filter(x => x.status === 'active').length;
+    const draft  = inWeek.filter(x => x.status === 'draft').length;
+    const closed = inWeek.filter(x => x.status === 'closed').length;
+
+    const set = (id, v) => { const el = document.getElementById(id); if (el) el.textContent = v; };
+    set('cc-stat-total',     total);
+    set('cc-stat-active',    active);
+    set('cc-stat-draft',     draft);
+    set('cc-stat-closed',    closed);
+    set('cc-stat-templates', _templates.length);
+}
+
 // ─── Instance list ────────────────────────────────────────────────────────────
 
 export async function loadCombatInstances() {
@@ -151,6 +176,9 @@ function _renderInstanceList() {
         if (!byDate[d]) byDate[d] = [];
         byDate[d].push(inst);
     });
+
+    // Обновляем статистику (только для админа)
+    if (_isAdmin) _updateAdminStats();
 
     const STATUS_LABEL = { draft: 'Черновик', active: 'Активен', closed: 'Закрыт' };
     const STATUS_CLASS = { draft: 'cc-badge--draft', active: 'cc-badge--active', closed: 'cc-badge--closed' };

@@ -17,34 +17,53 @@ window.app = {
 
 // ─── Переключение вкладок управления (Department View) ───────────────────────
 
+let _tasksDeptInited = false;
+
 function switchDeptTab(tab) {
     document.getElementById('dept-event-cards')?.classList.add('hidden');
     document.getElementById('dept-content')?.classList.add('hidden');
     document.getElementById('dept-combat-calc')?.classList.add('hidden');
     document.getElementById('dept-duty-panel')?.classList.add('hidden');
+    document.getElementById('dept-tasks-panel')?.classList.add('hidden');
 
     // Сбрасываем активный стиль у всех кнопок управления
-    document.getElementById('dept-main-tab-btn')?.classList.remove('btn-filled');
-    document.getElementById('dept-main-tab-btn')?.classList.add('btn-outlined');
-    document.getElementById('cc-dept-tab-btn')?.classList.remove('btn-filled');
-    document.getElementById('cc-dept-tab-btn')?.classList.add('btn-outlined');
-    document.getElementById('dept-duty-tab-btn')?.classList.remove('btn-filled');
-    document.getElementById('dept-duty-tab-btn')?.classList.add('btn-outlined');
+    const resetBtn = (id) => {
+        const b = document.getElementById(id);
+        if (!b) return;
+        b.classList.remove('btn-filled');
+        b.classList.add('btn-outlined');
+    };
+    ['dept-main-tab-btn', 'cc-dept-tab-btn', 'dept-duty-tab-btn', 'dept-tasks-tab-btn'].forEach(resetBtn);
+
+    const activateBtn = (id) => {
+        const b = document.getElementById(id);
+        if (!b) return;
+        b.classList.remove('btn-outlined');
+        b.classList.add('btn-filled');
+    };
 
     if (tab === 'lists') {
         document.getElementById('dept-event-cards')?.classList.remove('hidden');
-        document.getElementById('dept-main-tab-btn')?.classList.remove('btn-outlined');
-        document.getElementById('dept-main-tab-btn')?.classList.add('btn-filled');
+        activateBtn('dept-main-tab-btn');
     } else if (tab === 'combat') {
         document.getElementById('dept-combat-calc')?.classList.remove('hidden');
-        document.getElementById('cc-dept-tab-btn')?.classList.remove('btn-outlined');
-        document.getElementById('cc-dept-tab-btn')?.classList.add('btn-filled');
+        activateBtn('cc-dept-tab-btn');
         combatCalc.loadCombatInstances();
     } else if (tab === 'duty') {
         document.getElementById('dept-duty-panel')?.classList.remove('hidden');
-        document.getElementById('dept-duty-tab-btn')?.classList.remove('btn-outlined');
-        document.getElementById('dept-duty-tab-btn')?.classList.add('btn-filled');
+        activateBtn('dept-duty-tab-btn');
         deptDuty.loadDeptSchedules();
+    } else if (tab === 'tasks') {
+        document.getElementById('dept-tasks-panel')?.classList.remove('hidden');
+        activateBtn('dept-tasks-tab-btn');
+        import('./tasks.js').then(m => {
+            if (!_tasksDeptInited) {
+                m.initTasks('tasks-root-dept', false);
+                _tasksDeptInited = true;
+            } else {
+                m.reloadTasks();
+            }
+        });
     }
 }
 
@@ -89,8 +108,8 @@ function bindEvents() {
     });
 
     // ── Вкладки панели Администратора ────────────────────────────────────────
-    // Порядок: dashboard, editor, users, persons, duty, combat
-    const tabMap = ['dashboard', 'editor', 'users', 'persons', 'duty', 'combat'];
+    // Порядок: dashboard, editor, history, users, persons, duty, combat, calendar
+    const tabMap = ['dashboard', 'editor', 'history', 'users', 'persons', 'duty', 'combat', 'calendar'];
     document.querySelectorAll('.tab-btn').forEach((btn, index) => {
         btn.addEventListener('click', () => ui.switchAdminTab(tabMap[index] ?? 'dashboard'));
     });
@@ -101,6 +120,8 @@ function bindEvents() {
     document.getElementById('editor-is-template-cb')?.addEventListener('change', admin.toggleCurrentEventTemplate);
     document.getElementById('add-group-btn')?.addEventListener('click', admin.handleAddGroup);
     document.getElementById('load-editor-btn')?.addEventListener('click', admin.loadAdminEditor);
+    // Автозагрузка при выборе шаблона в выпадающем списке
+    document.getElementById('editor-event-id')?.addEventListener('change', admin.autoLoadEditorOnChange);
     document.getElementById('editor-toggle-status-btn')?.addEventListener('click', admin.toggleEventStatus);
     document.getElementById('editor-delete-event-btn')?.addEventListener('click', admin.handleDeleteEvent);
     document.getElementById('create-user-btn')?.addEventListener('click', admin.handleCreateUser);
@@ -138,10 +159,11 @@ function bindEvents() {
         }
     });
 
-    // Вкладки управления (Списки / Графики / Боевой расчёт)
-    document.getElementById('dept-main-tab-btn')?.addEventListener('click', () => switchDeptTab('lists'));
-    document.getElementById('cc-dept-tab-btn')?.addEventListener('click',   () => switchDeptTab('combat'));
-    document.getElementById('dept-duty-tab-btn')?.addEventListener('click', () => switchDeptTab('duty'));
+    // Вкладки управления (Списки / Графики / Боевой расчёт / Календарь)
+    document.getElementById('dept-main-tab-btn')?.addEventListener('click',  () => switchDeptTab('lists'));
+    document.getElementById('cc-dept-tab-btn')?.addEventListener('click',    () => switchDeptTab('combat'));
+    document.getElementById('dept-duty-tab-btn')?.addEventListener('click',  () => switchDeptTab('duty'));
+    document.getElementById('dept-tasks-tab-btn')?.addEventListener('click', () => switchDeptTab('tasks'));
 
     // ── Инициализация UI-компонентов (без API-вызовов) ────────────────────────
     ui.initPersonsTab();

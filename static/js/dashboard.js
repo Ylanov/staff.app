@@ -26,6 +26,13 @@ export function initDashboard() {
 }
 
 export async function loadDashboard() {
+    // Защита: дашборд — только для админа. Если setInterval продолжает тикать
+    // после смены пользователя на department, молча выходим и останавливаем таймер.
+    if (window.currentUserRole !== 'admin') {
+        stopDashboard();
+        return;
+    }
+
     const container = document.getElementById('db-content');
     if (!container) return;
 
@@ -56,11 +63,21 @@ export async function loadDashboard() {
 
 function _startAutoRefresh() {
     clearInterval(_refreshTimer);
-    // Обновляем каждые 30 секунд если вкладка открыта
+    // Обновляем каждые 30 секунд если вкладка открыта и мы админ
     _refreshTimer = setInterval(() => {
+        if (window.currentUserRole !== 'admin') {
+            stopDashboard();
+            return;
+        }
         const tab = document.getElementById('tab-dashboard');
         if (!tab?.classList.contains('hidden')) loadDashboard();
     }, 30_000);
+}
+
+// Останавливает автообновление дашборда — вызывается при logout/смене сессии
+export function stopDashboard() {
+    clearInterval(_refreshTimer);
+    _refreshTimer = null;
 }
 
 // Вызывать из websockets.js при событии update
@@ -213,19 +230,12 @@ function _renderDashboard(data) {
 
     container.innerHTML = html;
 
-    // Клик по карточке → открыть список в редакторе
+    // Клик по карточке → открыть список в режиме просмотра (модалка с таблицей),
+    // ровно так же, как кнопка «👁 Просмотр» во вкладке История.
     container.querySelectorAll('.db-event-card[data-event-id]').forEach(card => {
         card.addEventListener('click', () => {
-            const eventId = card.dataset.eventId;
-            // Переключаемся на вкладку редактора и загружаем список
-            import('./ui.js').then(m => m.switchAdminTab('editor'));
-            setTimeout(() => {
-                const sel = document.getElementById('editor-event-id');
-                if (sel) {
-                    sel.value = eventId;
-                    import('./admin.js').then(m => m.loadAdminEditor());
-                }
-            }, 80);
+            const eventId = parseInt(card.dataset.eventId, 10);
+            import('./history.js').then(m => m.openEventReadonly(eventId));
         });
     });
 }
@@ -255,7 +265,7 @@ function _renderEventCard(ev) {
     }).join('');
 
     return `
-    <div class="db-event-card" data-event-id="${ev.id}" title="Открыть в редакторе">
+    <div class="db-event-card" data-event-id="${ev.id}" title="Открыть для просмотра (как в Истории)">
         <div class="db-event-card__top">
             <div class="db-event-card__title-row">
                 <span class="db-event-card__title">${_esc(ev.title)}</span>

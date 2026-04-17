@@ -69,8 +69,8 @@ function _bindUI() {
 
 async function _loadPositions() {
     try {
-        // Запрос к публичному эндпоинту, доступному всем авторизованным пользователям
-        _positions = await api.get('/positions');
+        // Роутер dept смонтирован с префиксом /api/v1/dept — полный путь /api/v1/dept/positions
+        _positions = await api.get('/dept/positions');
     } catch {
         _positions = [];
     }

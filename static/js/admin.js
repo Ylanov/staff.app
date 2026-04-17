@@ -8,6 +8,14 @@ let availablePositions   = [];
 let availableDepartments = [];
 let currentEditorEventId = null;
 let currentColumns       = []; // активная конфигурация столбцов загруженного списка
+let currentEditorData    = null; // полные данные загруженного события (для фильтрации)
+
+// Состояние фильтров редактора
+const editorFilter = {
+    query:          '',
+    department:     '',
+    unfilledOnly:   false,
+};
 
 // ─── Столбцы по умолчанию (зеркало Python DEFAULT_COLUMNS) ───────────────────
 const DEFAULT_COLUMNS = [
@@ -51,16 +59,16 @@ function notify(message, type = 'success') {
 // ─── Управление списками ──────────────────────────────────────────────────────
 
 export async function handleCreateEvent() {
-    const title      = el('event-title').value.trim();
-    const isTemplate = el('event-is-template')?.checked || false;
-    if (!title) return showError('Введите название списка');
+    const title = el('event-title').value.trim();
+    // Редактор работает только с шаблонами — всегда ставим is_template=true
+    if (!title) return showError('Введите название шаблона');
     try {
-        await api.post('/admin/events', { title, is_template: isTemplate });
-        notify('Список создан!');
+        await api.post('/admin/events', { title, is_template: true });
+        notify('Шаблон создан!');
         el('event-title').value = '';
-        if (el('event-is-template')) el('event-is-template').checked = false;
+        if (el('event-is-template')) el('event-is-template').checked = true;
         await loadEventsDropdowns();
-    } catch (e) { console.error('handleCreateEvent:', e); showError('Ошибка создания списка'); }
+    } catch (e) { console.error('handleCreateEvent:', e); showError('Ошибка создания шаблона'); }
 }
 
 export async function handleAddGroup() {
@@ -186,6 +194,7 @@ async function renderAdminEditor(eventId, isSilentUpdate = false) {
         ]);
 
         availablePositions = positions;
+        currentEditorData  = data;
 
         const allCols = data.columns || DEFAULT_COLUMNS;
         currentColumns = [...allCols].sort((a, b) => a.order - b.order);
@@ -193,6 +202,9 @@ async function renderAdminEditor(eventId, isSilentUpdate = false) {
 
         el('editor-container')?.classList.remove('hidden');
         el('editor-empty')?.classList.add('hidden');
+
+        // Наполняем фильтр управлений уникальными значениями из слотов
+        _populateEditorDeptFilter(data);
 
         if (el('editor-title')) el('editor-title').textContent = data.event.title;
 
@@ -258,6 +270,9 @@ async function renderAdminEditor(eventId, isSilentUpdate = false) {
 
         el('master-tbody').innerHTML = tableHtml;
 
+        _applyEditorFilters();
+        _updateEditorStats();
+
         if (focusId) {
             const focused = el(focusId);
             if (focused) {
@@ -268,6 +283,153 @@ async function renderAdminEditor(eventId, isSilentUpdate = false) {
     } catch (e) {
         console.error('renderAdminEditor:', e);
         showError(`Ошибка загрузки редактора: ${e.message ?? e}`);
+    }
+}
+
+// ─── Фильтры редактора (поиск, управление, незаполненные) ───────────────────
+
+function _populateEditorDeptFilter(data) {
+    const sel = el('editor-filter-dept');
+    if (!sel) return;
+    const prev = sel.value;
+    const unique = new Set();
+    (data.groups || []).forEach(g => (g.slots || []).forEach(s => {
+        if (s.department) unique.add(s.department);
+    }));
+    const opts = ['<option value="">Все управления</option>']
+        .concat([...unique].sort().map(d => `<option value="${esc(d)}">${esc(formatRole(d))}</option>`));
+    sel.innerHTML = opts.join('');
+    // Сохраняем выбранное значение, если оно ещё актуально
+    if (prev && [...unique].includes(prev)) sel.value = prev;
+}
+
+function _applyEditorFilters() {
+    const tbody = el('master-tbody');
+    if (!tbody) return;
+    const q        = (editorFilter.query || '').toLowerCase();
+    const dept     = editorFilter.department || '';
+    const unfilled = !!editorFilter.unfilledOnly;
+
+    // Для каждой строки-слота решаем, показывать ли её
+    let visibleCount = 0;
+    tbody.querySelectorAll('tr[data-slot-id]').forEach(row => {
+        // Собираем текст всех инпутов в строке для поиска
+        const slotId = row.dataset.slotId;
+        const inputs = row.querySelectorAll('input, select');
+        let hay      = '';
+        let deptVal  = '';
+        let nameVal  = '';
+        inputs.forEach(inp => {
+            const idPrefix = inp.id.split('-')[0]; // name, rank, doc, call, note, pos, dept, cx
+            if (inp.tagName === 'SELECT') {
+                const opt = inp.options[inp.selectedIndex];
+                const txt = opt?.textContent ?? '';
+                hay += ' ' + txt.toLowerCase();
+                if (idPrefix === 'dept') deptVal = inp.value || '';
+            } else {
+                const v = (inp.value || '').toLowerCase();
+                hay += ' ' + v;
+                if (idPrefix === 'name') nameVal = inp.value || '';
+            }
+        });
+
+        let show = true;
+        if (q        && !hay.includes(q))        show = false;
+        if (dept     && deptVal !== dept)        show = false;
+        if (unfilled && nameVal.trim())          show = false;
+
+        row.style.display = show ? '' : 'none';
+        if (show) visibleCount++;
+    });
+
+    // Скрываем заголовки групп, если все их строки отфильтрованы
+    tbody.querySelectorAll('tr.group-header').forEach(headerRow => {
+        let next = headerRow.nextElementSibling;
+        let hasVisible = false;
+        while (next && !next.classList.contains('group-header')) {
+            if (next.style.display !== 'none') { hasVisible = true; break; }
+            next = next.nextElementSibling;
+        }
+        const hasAnyFilter = q || dept || unfilled;
+        headerRow.style.display = (hasAnyFilter && !hasVisible) ? 'none' : '';
+    });
+
+    const visEl = el('editor-stats-visible');
+    if (visEl) {
+        const anyFilter = q || dept || unfilled;
+        if (anyFilter) {
+            visEl.classList.remove('hidden');
+            visEl.textContent = `Показано: ${visibleCount}`;
+        } else {
+            visEl.classList.add('hidden');
+        }
+    }
+}
+
+function _updateEditorStats() {
+    if (!currentEditorData) return;
+    let total = 0, filled = 0;
+    (currentEditorData.groups || []).forEach(g => (g.slots || []).forEach(s => {
+        total++;
+        if (s.full_name && s.full_name.trim()) filled++;
+    }));
+    const empty = total - filled;
+
+    const set = (id, v) => { const e = el(id); if (e) e.textContent = v; };
+    set('editor-stats-total',  `Всего: ${total}`);
+    set('editor-stats-filled', `✓ ${filled}`);
+    set('editor-stats-empty',  `○ ${empty}`);
+}
+
+function _bindEditorFilterEvents() {
+    const searchInput = el('editor-search-input');
+    if (searchInput && !searchInput.dataset.bound) {
+        searchInput.dataset.bound = '1';
+        let t = null;
+        searchInput.addEventListener('input', (e) => {
+            clearTimeout(t);
+            t = setTimeout(() => {
+                editorFilter.query = (e.target.value || '').trim();
+                _applyEditorFilters();
+            }, 150);
+        });
+    }
+
+    const deptFilter = el('editor-filter-dept');
+    if (deptFilter && !deptFilter.dataset.bound) {
+        deptFilter.dataset.bound = '1';
+        deptFilter.addEventListener('change', (e) => {
+            editorFilter.department = e.target.value || '';
+            _applyEditorFilters();
+        });
+    }
+
+    const unfilledBtn = el('editor-filter-unfilled');
+    if (unfilledBtn && !unfilledBtn.dataset.bound) {
+        unfilledBtn.dataset.bound = '1';
+        unfilledBtn.addEventListener('click', () => {
+            editorFilter.unfilledOnly = !editorFilter.unfilledOnly;
+            unfilledBtn.classList.toggle('btn-filled',   editorFilter.unfilledOnly);
+            unfilledBtn.classList.toggle('btn-outlined', !editorFilter.unfilledOnly);
+            _applyEditorFilters();
+        });
+    }
+
+    const clearBtn = el('editor-filter-clear');
+    if (clearBtn && !clearBtn.dataset.bound) {
+        clearBtn.dataset.bound = '1';
+        clearBtn.addEventListener('click', () => {
+            editorFilter.query        = '';
+            editorFilter.department   = '';
+            editorFilter.unfilledOnly = false;
+            if (searchInput) searchInput.value = '';
+            if (deptFilter)  deptFilter.value  = '';
+            if (unfilledBtn) {
+                unfilledBtn.classList.remove('btn-filled');
+                unfilledBtn.classList.add('btn-outlined');
+            }
+            _applyEditorFilters();
+        });
     }
 }
 
@@ -301,6 +463,24 @@ export async function updateAdminSlot(slotId) {
     try {
         const updatedSlot = await api.put(`/admin/slots/${slotId}`, data);
         if (tr && updatedSlot?.version != null) tr.dataset.version = updatedSlot.version;
+
+        // Обновляем кэшированные данные события для корректной статистики
+        if (currentEditorData && updatedSlot) {
+            (currentEditorData.groups || []).forEach(g => {
+                (g.slots || []).forEach(s => {
+                    if (s.id === updatedSlot.id) {
+                        s.full_name  = updatedSlot.full_name;
+                        s.rank       = updatedSlot.rank;
+                        s.doc_number = updatedSlot.doc_number;
+                        s.department = updatedSlot.department;
+                        s.callsign   = updatedSlot.callsign;
+                        s.note       = updatedSlot.note;
+                        s.version    = updatedSlot.version;
+                    }
+                });
+            });
+            _updateEditorStats();
+        }
     } catch (e) {
         console.error('updateAdminSlot:', e);
         if (e.status === 409) showError('Конфликт! Данные были изменены другим пользователем. Таблица обновляется.');
@@ -309,8 +489,27 @@ export async function updateAdminSlot(slotId) {
 }
 
 export function loadAdminEditor() {
-    const eventId = el('editor-event-id').value;
-    if (!eventId) return showError('Выберите список для загрузки редактора');
+    const eventId = el('editor-event-id')?.value;
+    if (!eventId) {
+        // Если селект пуст — вероятно нет шаблонов. Подсказываем как создать.
+        const hasOptions = Array.from(el('editor-event-id')?.options || [])
+            .some(o => o.value);
+        showError(hasOptions
+            ? 'Выберите шаблон из выпадающего меню'
+            : 'Нет шаблонов. Создайте первый через «+ Новый список»');
+        return;
+    }
+    currentEditorEventId = eventId;
+    renderAdminEditor(eventId);
+}
+
+/**
+ * Автозагрузка редактора при смене выбранного шаблона в селекте.
+ * Вызывается из app.js как обработчик change на #editor-event-id.
+ */
+export function autoLoadEditorOnChange() {
+    const eventId = el('editor-event-id')?.value;
+    if (!eventId) return;
     currentEditorEventId = eventId;
     renderAdminEditor(eventId);
 }
@@ -619,6 +818,9 @@ export function listenForUpdates() {
 
     // Кнопка «Столбцы» статически в HTML — привязываем обработчик один раз здесь
     el('editor-columns-btn')?.addEventListener('click', openColumnEditor);
+
+    // Поиск и фильтры в редакторе шаблонов
+    _bindEditorFilterEvents();
 
     document.addEventListener('datachanged', ({ detail }) => {
         if (currentEditorEventId && currentEditorEventId == detail.eventId) {

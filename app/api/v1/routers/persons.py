@@ -163,9 +163,26 @@ def search_persons(
         db:    Session = Depends(get_db),
         current_user: User = Depends(get_current_user),
 ):
+    """
+    Поиск по ФИО (автодополнение при заполнении слотов).
+
+    Админ видит всех.
+    Управление видит:
+      - своих людей (department == username)
+      - «общих» людей без привязки к управлению (department IS NULL)
+        — это например те, кого другие департаменты ещё не пометили,
+           либо которых админ импортировал без указания управления.
+    """
+    from sqlalchemy import or_
+
     query = db.query(Person).filter(Person.full_name.ilike(f"%{q}%"))
     if current_user.role != "admin":
-        query = query.filter(Person.department == current_user.username)
+        query = query.filter(
+            or_(
+                Person.department == current_user.username,
+                Person.department.is_(None),
+            )
+        )
     return query.order_by(Person.full_name).limit(limit).all()
 
 
@@ -532,12 +549,20 @@ def upsert_person_from_slot(
         created_at= now,
         updated_at= now,
     )
+    # Правила обновления при конфликте по full_name:
+    #   rank / doc_number — НЕ затираем уже заполненные значения
+    #     (если в базе есть звание, а новый слот его не прислал — сохраняем).
+    #   department        — НАОБОРОТ: всегда обновляем на присланное, если
+    #     оно не null. То есть «человек сейчас принадлежит тому управлению,
+    #     кто его последним заполнил в слоте». Это требование бизнес-логики:
+    #     если upr_5 внёс ФИО — в базе он становится «upr_5», независимо
+    #     от того, что там было раньше.
     stmt = stmt.on_conflict_do_update(
         index_elements=["full_name"],
         set_={
             "rank":       text("COALESCE(persons.rank,       EXCLUDED.rank)"),
             "doc_number": text("COALESCE(persons.doc_number, EXCLUDED.doc_number)"),
-            "department": text("COALESCE(persons.department, EXCLUDED.department)"),
+            "department": text("COALESCE(EXCLUDED.department, persons.department)"),
             "updated_at": stmt.excluded.updated_at,
         },
     )

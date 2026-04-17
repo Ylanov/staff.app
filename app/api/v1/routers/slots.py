@@ -126,11 +126,15 @@ async def fill_slot(
     slot.version += 1  # Увеличиваем версию
 
     if slot.full_name and slot.full_name.strip():
+        # Передаём department из слота — чтобы запись в базе людей
+        # попала к нужному управлению, и оно смогло её потом найти
+        # через автодополнение (/persons/search).
         upsert_person_from_slot(
             db=db,
             full_name=slot.full_name,
             rank=slot.rank,
             doc_number=slot.doc_number,
+            department=slot.department,
         )
 
     db.commit()
