@@ -206,7 +206,12 @@ async function _deleteSchedule(id) {
 // ─── Люди в графике ───────────────────────────────────────────────────────────
 
 async function _loadPersonsAndMarks() {
-    await Promise.all([_loadPersons(), _loadMarksAndRender()]);
+    // ПОСЛЕДОВАТЕЛЬНО: сначала persons, потом marks+render.
+    // Раньше было Promise.all: при первом заходе _renderGrid стартовал
+    // с пустым _persons (persons грузились параллельно) и таблица
+    // рисовалась без людей. Требовался F5 чтобы всё показалось.
+    await _loadPersons();
+    await _loadMarksAndRender();
 }
 
 async function _loadPersons() {
