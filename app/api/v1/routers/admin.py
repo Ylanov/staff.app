@@ -4,7 +4,7 @@ import json
 import re
 from datetime import date as date_type
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy.orm import Session, joinedload, selectinload
 from pydantic import BaseModel, Field, ConfigDict, field_validator
 from typing import Literal, List, Optional, Any, Dict
@@ -22,7 +22,18 @@ from app.api.dependencies import get_current_active_admin
 from app.core.security import get_password_hash
 from app.core.websockets import manager
 from app.core.cache import positions_cache, get_or_set, invalidate
+from app.core.audit import (
+    log_change, snapshot, compute_diff, notify_user,
+    ACTION_CREATE, ACTION_UPDATE, ACTION_DELETE,
+)
 from app.api.v1.routers.persons import upsert_person_from_slot
+
+
+# Те же поля что трассирует slots.py — для консистентности diff и revert
+_SLOT_AUDIT_FIELDS = (
+    "full_name", "rank", "doc_number", "position_id",
+    "department", "callsign", "note",
+)
 
 router = APIRouter()
 
@@ -620,6 +631,7 @@ async def add_slot_to_group(
 @router.delete("/slots/{slot_id}")
 async def delete_slot(
         slot_id:       int,
+        request:       Request,
         db:            Session = Depends(get_db),
         current_admin: User    = Depends(get_current_active_admin),
 ):
@@ -632,6 +644,18 @@ async def delete_slot(
     if not slot:
         raise HTTPException(status_code=404, detail="Строка не найдена")
     event_id = slot.group.event_id
+
+    # Audit: фиксируем snapshot удалённого слота в old_values
+    log_change(
+        db, request, current_admin,
+        action      = ACTION_DELETE,
+        entity_type = "slot",
+        entity_id   = slot.id,
+        old_values  = snapshot(slot, _SLOT_AUDIT_FIELDS),
+        new_values  = {},
+        extra       = {"event_id": event_id},
+    )
+
     db.delete(slot)
     db.commit()
     await manager.broadcast({"event_id": event_id, "action": "update"})
@@ -642,6 +666,7 @@ async def delete_slot(
 async def update_slot(
         slot_id:       int,
         slot_in:       SlotAdminUpdate,
+        request:       Request,
         db:            Session = Depends(get_db),
         current_admin: User    = Depends(get_current_active_admin),
 ):
@@ -660,6 +685,12 @@ async def update_slot(
             detail="Данные были изменены другим пользователем. "
                    "Таблица обновится автоматически.",
         )
+
+    # Snapshot до админского редактирования — фиксируем diff для audit,
+    # а заодно старый department чтобы уведомить сразу оба управления
+    # если квота перенесена.
+    before = snapshot(slot, _SLOT_AUDIT_FIELDS)
+    old_dept = slot.department
 
     old_position_id = slot.position_id
     new_position_id = slot_in.position_id
@@ -715,9 +746,61 @@ async def update_slot(
             department=slot.department,
         )
 
+    # ── Audit + уведомления ──────────────────────────────────────────────────
+    after = snapshot(slot, _SLOT_AUDIT_FIELDS)
+    diff  = compute_diff(before, after)
+    target_user_ids: list[int] = []   # кого уведомлять realtime после commit
+
+    if diff:
+        audit_entry = log_change(
+            db, request, current_admin,
+            action      = ACTION_UPDATE,
+            entity_type = "slot",
+            entity_id   = slot.id,
+            old_values  = diff["old"],
+            new_values  = diff["new"],
+            extra       = {
+                "event_id":    slot.group.event_id,
+                "event_title": slot.group.event.title if slot.group.event else None,
+                "by_admin":    True,
+            },
+        )
+
+        # Нотификации затронутым department-юзерам:
+        # - текущему (slot.department) если админ отредактировал их строку;
+        # - старому (если квота переносилась на другое управление).
+        target_unames: set[str] = set()
+        if slot.department and slot.department != current_admin.username:
+            target_unames.add(slot.department)
+        if old_dept and old_dept != slot.department and old_dept != current_admin.username:
+            target_unames.add(old_dept)
+
+        for uname in target_unames:
+            target_user = db.query(User).filter(User.username == uname).first()
+            if target_user:
+                notify_user(
+                    db, target_user.id,
+                    kind  = "slot_changed",
+                    title = "Ваш слот был изменён администратором",
+                    body  = (f"Список «{slot.group.event.title}» — "
+                             f"группа «{slot.group.name}». "
+                             "Откройте вкладку «Списки» чтобы увидеть детали."),
+                    link  = f"/static/index.html#event/{slot.group.event_id}",
+                    audit = audit_entry,
+                )
+                target_user_ids.append(target_user.id)
+
     db.commit()
     db.refresh(slot)
     await manager.broadcast({"event_id": slot.group.event_id, "action": "update"})
+
+    # Realtime push: уведомляем вкладки затронутых юзеров подтянуть /notifications.
+    # Делаем после commit — иначе notification ещё может не быть в БД.
+    for uid in target_user_ids:
+        await manager.push_to_user(uid, {
+            "action": "notification_new",
+            "kind":   "slot_changed",
+        })
 
     return {
         "id":          slot.id,
@@ -747,6 +830,7 @@ def get_all_users(
 @router.post("/users", response_model=UserResponse, status_code=201)
 def create_user(
         user_in:       UserCreate,
+        request:       Request,
         db:            Session = Depends(get_db),
         current_admin: User    = Depends(get_current_active_admin),
 ):
@@ -757,8 +841,6 @@ def create_user(
         )
 
     # Если permissions не заданы — используем дефолт (все вкладки).
-    # Для admin-роли permissions всё равно игнорируются при проверках,
-    # но храним для единообразия.
     perms = user_in.permissions if user_in.permissions is not None else list(DEFAULT_PERMISSIONS)
 
     new_user = User(
@@ -770,6 +852,20 @@ def create_user(
     db.add(new_user)
     db.commit()
     db.refresh(new_user)
+
+    log_change(
+        db, request, current_admin,
+        action      = ACTION_CREATE,
+        entity_type = "user",
+        entity_id   = new_user.id,
+        old_values  = {},
+        new_values  = {
+            "username":    new_user.username,
+            "role":        new_user.role,
+            "permissions": perms,
+        },
+    )
+    db.commit()
     return new_user
 
 
@@ -778,6 +874,7 @@ def create_user(
 def update_user_permissions(
         user_id:       int,
         payload:       UserPermissionsUpdate,
+        request:       Request,
         db:            Session = Depends(get_db),
         current_admin: User    = Depends(get_current_active_admin),
 ):
@@ -802,15 +899,38 @@ def update_user_permissions(
             detail="Главному администратору нельзя ограничивать доступ",
         )
 
+    old_perms = list(user.permissions or [])
     user.permissions = payload.permissions
     db.commit()
     db.refresh(user)
+
+    if sorted(old_perms) != sorted(payload.permissions):
+        log_change(
+            db, request, current_admin,
+            action      = ACTION_UPDATE,
+            entity_type = "user_permissions",
+            entity_id   = user.id,
+            old_values  = {"permissions": old_perms},
+            new_values  = {"permissions": payload.permissions},
+            extra       = {"username": user.username},
+        )
+        notify_user(
+            db, user.id,
+            kind  = "permissions_changed",
+            title = "Администратор изменил ваш доступ",
+            body  = "Ваш набор доступных вкладок был обновлён. "
+                    "Перезайдите чтобы увидеть актуальный список.",
+            link  = None,
+        )
+        db.commit()
+
     return user
 
 
 @router.delete("/users/{user_id}")
 def delete_user(
         user_id:       int,
+        request:       Request,
         db:            Session = Depends(get_db),
         current_admin: User    = Depends(get_current_active_admin),
 ):
@@ -819,6 +939,16 @@ def delete_user(
         raise HTTPException(status_code=404, detail="Пользователь не найден")
     if user.username == "admin":
         raise HTTPException(status_code=403, detail="Нельзя удалить главного администратора")
+
+    log_change(
+        db, request, current_admin,
+        action      = ACTION_DELETE,
+        entity_type = "user",
+        entity_id   = user.id,
+        old_values  = {"username": user.username, "role": user.role,
+                       "permissions": user.permissions or []},
+        new_values  = {},
+    )
     db.delete(user)
     db.commit()
     return {"message": "Пользователь удалён"}

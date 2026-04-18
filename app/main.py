@@ -20,6 +20,7 @@ from app.api.v1.routers import settings as settings_router
 from app.api.v1.routers import dept_duty
 from app.api.v1.routers import dashboard
 from app.api.v1.routers import tasks
+from app.api.v1.routers import audit as audit_module
 from app.db.init_db import init_db
 from app.core.websockets import manager, handle_websocket_connection
 
@@ -111,6 +112,13 @@ app.include_router(duty.router,            prefix="/api/v1/admin",   tags=["Гр
 app.include_router(dashboard.router,       prefix="/api/v1/admin",   tags=["Дашборд"])
 app.include_router(dept_duty.router,       prefix="/api/v1/dept",    tags=["Графики наряда (управление)"])
 app.include_router(tasks.router,           prefix="/api/v1/tasks",   tags=["Календарь задач"])
+
+# Аудит и уведомления.
+# audit_router содержит админский /audit-log и общие /slots/.../history /revert,
+# поэтому подключаем его под /api/v1 (без /admin-префикса); admin-only
+# проверяется внутри конкретного handler'а.
+app.include_router(audit_module.audit_router,         prefix="/api/v1",               tags=["Аудит"])
+app.include_router(audit_module.notifications_router, prefix="/api/v1/notifications", tags=["Уведомления"])
 
 # ─── Боевой расчёт ────────────────────────────────────────────────────────────
 # ИСПРАВЛЕНО: раньше один и тот же роутер подключался дважды с разными prefix,

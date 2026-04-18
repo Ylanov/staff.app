@@ -35,6 +35,11 @@ class ConnectionManager:
         self._connections: Set[WebSocket] = set()
         # Подписки: websocket → event_id (или None если не подписан)
         self._subscriptions: Dict[WebSocket, Optional[int]] = {}
+        # Идентификация юзера: websocket → user_id (для персональных уведомлений)
+        # Устанавливается клиентом через {"type":"identify","user_id":N}.
+        # user_id → set[websocket] — быстрый lookup для push_to_user.
+        self._user_by_ws: Dict[WebSocket, int] = {}
+        self._ws_by_user: Dict[int, Set[WebSocket]] = {}
         self._lock = asyncio.Lock()
 
     # ─── Подключение / отключение ─────────────────────────────────────────────
@@ -55,6 +60,60 @@ class ConnectionManager:
         async with self._lock:
             self._connections.discard(websocket)
             self._subscriptions.pop(websocket, None)
+            uid = self._user_by_ws.pop(websocket, None)
+            if uid is not None:
+                bucket = self._ws_by_user.get(uid)
+                if bucket:
+                    bucket.discard(websocket)
+                    if not bucket:
+                        self._ws_by_user.pop(uid, None)
+
+    # ─── Идентификация юзера (для персональных уведомлений) ───────────────────
+
+    async def identify(self, websocket: WebSocket, user_id: int) -> None:
+        """
+        Привязать соединение к user_id. Один юзер может иметь несколько
+        сокетов (разные вкладки/устройства) — все получат уведомление.
+        """
+        async with self._lock:
+            if websocket not in self._connections:
+                return
+            # Перепривязка если соединение уже было привязано
+            old = self._user_by_ws.get(websocket)
+            if old is not None and old != user_id:
+                bucket = self._ws_by_user.get(old)
+                if bucket:
+                    bucket.discard(websocket)
+                    if not bucket:
+                        self._ws_by_user.pop(old, None)
+            self._user_by_ws[websocket] = user_id
+            self._ws_by_user.setdefault(user_id, set()).add(websocket)
+
+    async def push_to_user(self, user_id: int, message: dict) -> None:
+        """Отправить сообщение всем сокетам конкретного user_id."""
+        text = json.dumps(message)
+        async with self._lock:
+            targets = list(self._ws_by_user.get(user_id, ()))
+
+        failed = []
+        for ws in targets:
+            try:
+                await ws.send_text(text)
+            except Exception:
+                failed.append(ws)
+
+        if failed:
+            async with self._lock:
+                for ws in failed:
+                    self._connections.discard(ws)
+                    self._subscriptions.pop(ws, None)
+                    uid = self._user_by_ws.pop(ws, None)
+                    if uid is not None:
+                        bucket = self._ws_by_user.get(uid)
+                        if bucket:
+                            bucket.discard(ws)
+                            if not bucket:
+                                self._ws_by_user.pop(uid, None)
 
     # ─── Подписки ─────────────────────────────────────────────────────────────
 
@@ -192,6 +251,12 @@ async def handle_websocket_connection(websocket: WebSocket) -> None:
             # ── Отписка ───────────────────────────────────────────────────────
             elif msg_type == "unsubscribe":
                 await manager.unsubscribe(websocket)
+
+            # ── Идентификация для персональных уведомлений ────────────────────
+            elif msg_type == "identify":
+                uid = payload.get("user_id")
+                if isinstance(uid, int):
+                    await manager.identify(websocket, uid)
 
     except WebSocketDisconnect:
         print(f"❌ WebSocket disconnected (total: {manager.connection_count - 1})")

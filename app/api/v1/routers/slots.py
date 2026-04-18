@@ -1,6 +1,6 @@
 # app/api/v1/routers/slots.py
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.orm import Session, joinedload
 from typing import List
 from datetime import date as date_today
@@ -14,7 +14,20 @@ from app.models.person import Person
 from app.schemas.slot import SlotUpdate, SlotResponse
 from app.api.dependencies import get_current_user
 from app.core.websockets import manager
+from app.core.audit import (
+    log_change, snapshot, compute_diff, notify_user,
+    ACTION_UPDATE,
+)
 from app.api.v1.routers.persons import upsert_person_from_slot
+
+
+# Поля которые трассируем в audit для слота.
+# Список строго согласован с app/api/v1/routers/audit.py:_SLOT_AUDIT_FIELDS,
+# потому что endpoint revert применяет только эти же поля.
+SLOT_AUDIT_FIELDS = (
+    "full_name", "rank", "doc_number", "position_id",
+    "department", "callsign", "note",
+)
 
 router = APIRouter()
 
@@ -96,6 +109,7 @@ def get_my_slots(
 async def fill_slot(
         slot_id: int,
         slot_in: SlotUpdate,
+        request: Request,
         db: Session = Depends(get_db),
         current_user: User = Depends(get_current_user),
 ):
@@ -126,12 +140,30 @@ async def fill_slot(
             detail="Данные были изменены другим пользователем. Таблица обновится автоматически, проверьте данные."
         )
 
+    # Snapshot до изменений — для diff в audit-логе
+    before = snapshot(slot, SLOT_AUDIT_FIELDS)
+
     update_data = slot_in.model_dump(exclude_unset=True)
     for key, value in update_data.items():
         if key != 'version':  # Поле version не обновляем напрямую
             setattr(slot, key, value)
 
     slot.version += 1  # Увеличиваем версию
+
+    # Audit: пишем diff. Если пусто (юзер нажал «Сохранить» без реальных
+    # изменений) — не засоряем лог.
+    after = snapshot(slot, SLOT_AUDIT_FIELDS)
+    diff = compute_diff(before, after)
+    if diff:
+        log_change(
+            db, request, current_user,
+            action      = ACTION_UPDATE,
+            entity_type = "slot",
+            entity_id   = slot.id,
+            old_values  = diff["old"],
+            new_values  = diff["new"],
+            extra       = {"event_id": slot.group.event_id},
+        )
 
     if slot.full_name and slot.full_name.strip():
         # Передаём department из слота — чтобы запись в базе людей
@@ -161,6 +193,7 @@ async def fill_slot(
 async def apply_person_to_slot(
         slot_id: int,
         payload: ApplyPersonPayload,
+        request: Request,
         db: Session = Depends(get_db),
         current_user: User = Depends(get_current_user),
 ):
@@ -212,6 +245,8 @@ async def apply_person_to_slot(
     if not person:
         raise HTTPException(status_code=404, detail="Человек не найден в общей базе")
 
+    before = snapshot(slot, SLOT_AUDIT_FIELDS)
+
     # Копируем ключевые поля из Person в Slot.
     # Позиционные поля слота (position_id, department, callsign, note,
     # extra_data) НЕ трогаем — они задаются админом при создании строки.
@@ -221,7 +256,6 @@ async def apply_person_to_slot(
     slot.version   += 1
 
     # Обновляем общую базу — department становится текущим управлением.
-    # Это поведение совпадает с fill_slot (см. docstring upsert_person_from_slot).
     upsert_person_from_slot(
         db=db,
         full_name=slot.full_name,
@@ -229,6 +263,24 @@ async def apply_person_to_slot(
         doc_number=slot.doc_number,
         department=slot.department,
     )
+
+    # Audit: фиксируем диф с указанием что применение было из общей базы
+    after = snapshot(slot, SLOT_AUDIT_FIELDS)
+    diff  = compute_diff(before, after)
+    if diff:
+        log_change(
+            db, request, current_user,
+            action      = ACTION_UPDATE,
+            entity_type = "slot",
+            entity_id   = slot.id,
+            old_values  = diff["old"],
+            new_values  = diff["new"],
+            extra       = {
+                "event_id":      slot.group.event_id,
+                "applied_from":  "persons_base",
+                "person_id":     person.id,
+            },
+        )
 
     db.commit()
     db.refresh(slot)
