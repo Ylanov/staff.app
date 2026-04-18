@@ -1,11 +1,13 @@
 # app/api/v1/routers/auth.py
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy.orm import Session
 
 from app.db.database import get_db
 from app.models.user import User
+from app.core.config import settings
+from app.core.limiter import limiter
 from app.core.security import verify_password, create_access_token
 from app.schemas.token import Token
 from app.api.dependencies import get_current_user
@@ -14,7 +16,12 @@ router = APIRouter()
 
 
 @router.post("/login", response_model=Token, summary="Получить JWT-токен")
+# Rate limit per-IP. Лимит берётся из settings, чтобы можно было
+# регулировать через .env без пересборки. Request обязателен — SlowAPI
+# читает его для получения IP.
+@limiter.limit(lambda: settings.LOGIN_RATE_LIMIT)
 def login_access_token(
+    request: Request,
     db: Session = Depends(get_db),
     form_data: OAuth2PasswordRequestForm = Depends(),
 ):

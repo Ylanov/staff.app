@@ -19,30 +19,33 @@ depends_on:    Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
-    """Создаёт таблицу tasks для личных календарей пользователей."""
-    op.create_table(
-        'tasks',
-        sa.Column('id',          sa.Integer(),      primary_key=True),
-        sa.Column('owner_id',    sa.Integer(),      nullable=False),
-        sa.Column('title',       sa.String(300),    nullable=False),
-        sa.Column('description', sa.Text(),         nullable=True),
-        sa.Column('due_date',    sa.Date(),         nullable=False),
-        sa.Column('time_from',   sa.String(5),      nullable=True),
-        sa.Column('time_to',     sa.String(5),      nullable=True),
-        sa.Column('priority',    sa.String(20),     nullable=False, server_default='normal'),
-        sa.Column('status',      sa.String(20),     nullable=False, server_default='pending'),
-        sa.Column('category',    sa.String(100),    nullable=True),
-        sa.Column('color',       sa.String(7),      nullable=True),
-        sa.Column('created_at',  sa.DateTime(timezone=True), nullable=False,
-                  server_default=sa.text('CURRENT_TIMESTAMP')),
-        sa.Column('updated_at',  sa.DateTime(timezone=True), nullable=False,
-                  server_default=sa.text('CURRENT_TIMESTAMP')),
-        sa.ForeignKeyConstraint(['owner_id'], ['users.id'], ondelete='CASCADE'),
-    )
-    op.create_index('ix_tasks_owner_id', 'tasks', ['owner_id'])
-    op.create_index('ix_tasks_due_date', 'tasks', ['due_date'])
-    op.create_index('ix_tasks_status',   'tasks', ['status'])
-    op.create_index('ix_tasks_owner_due', 'tasks', ['owner_id', 'due_date'])
+    """Создаёт таблицу tasks для личных календарей пользователей.
+
+    Идемпотентно: CREATE TABLE/INDEX IF NOT EXISTS через raw SQL.
+    Защита от сценария когда таблица была создана вручную или предыдущим
+    частичным запуском миграции (встречается в prod после аварии).
+    """
+    op.execute("""
+        CREATE TABLE IF NOT EXISTS tasks (
+            id          SERIAL PRIMARY KEY,
+            owner_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            title       VARCHAR(300) NOT NULL,
+            description TEXT,
+            due_date    DATE NOT NULL,
+            time_from   VARCHAR(5),
+            time_to     VARCHAR(5),
+            priority    VARCHAR(20) NOT NULL DEFAULT 'normal',
+            status      VARCHAR(20) NOT NULL DEFAULT 'pending',
+            category    VARCHAR(100),
+            color       VARCHAR(7),
+            created_at  TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at  TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+    op.execute("CREATE INDEX IF NOT EXISTS ix_tasks_owner_id  ON tasks (owner_id)")
+    op.execute("CREATE INDEX IF NOT EXISTS ix_tasks_due_date  ON tasks (due_date)")
+    op.execute("CREATE INDEX IF NOT EXISTS ix_tasks_status    ON tasks (status)")
+    op.execute("CREATE INDEX IF NOT EXISTS ix_tasks_owner_due ON tasks (owner_id, due_date)")
 
 
 def downgrade() -> None:

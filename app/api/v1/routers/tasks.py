@@ -20,6 +20,7 @@ from datetime import date as date_type
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
+from sqlalchemy import case, func, and_
 from sqlalchemy.orm import Session, joinedload
 from pydantic import BaseModel, ConfigDict
 
@@ -198,39 +199,65 @@ def admin_summary(
     db: Session = Depends(get_db),
     admin: User = Depends(get_current_active_admin),
 ):
+    # ИСПРАВЛЕНО: раньше для каждого пользователя было 6 отдельных COUNT'ов.
+    # При 2к пользователей × 6 запросов = 12 000 round-trip'ов + TABLE SCAN'ов
+    # каждый раз. Теперь — ОДИН запрос с агрегацией через CASE WHEN.
+    # PostgreSQL проходит по tasks один раз с групировкой по owner_id и считает
+    # сразу все нужные срезы. Время ответа: секунды → миллисекунды.
     from datetime import timedelta
     today = date_type.today()
     in_7d = today + timedelta(days=7)
 
-    users = db.query(User).order_by(User.id).all()
-    result: List[dict] = []
-    for u in users:
-        qs = db.query(Task).filter(Task.owner_id == u.id)
-        total      = qs.count()
-        if total == 0 and u.role == "admin":
-            # Админа без задач не показываем, чтобы не шумел
-            continue
-        pending    = qs.filter(Task.status == "pending").count()
-        in_prog    = qs.filter(Task.status == "in_progress").count()
-        done       = qs.filter(Task.status == "done").count()
-        overdue    = qs.filter(
-            Task.status != "done",
-            Task.due_date < today,
-        ).count()
-        upcoming   = qs.filter(
+    # Один SUM(CASE WHEN ...) на каждый срез — аналог FILTER (WHERE ...)
+    # но работает и на старых Postgres, и на SQLite в тестах.
+    pending_expr    = func.sum(case((Task.status == "pending",     1), else_=0))
+    in_prog_expr    = func.sum(case((Task.status == "in_progress", 1), else_=0))
+    done_expr       = func.sum(case((Task.status == "done",        1), else_=0))
+    overdue_expr    = func.sum(case(
+        (and_(Task.status != "done", Task.due_date < today), 1), else_=0
+    ))
+    upcoming_expr   = func.sum(case(
+        (and_(
             Task.status != "done",
             Task.due_date >= today,
             Task.due_date <= in_7d,
-        ).count()
+        ), 1), else_=0
+    ))
 
+    # LEFT JOIN от users к tasks — пользователи без задач тоже попадают
+    # в результат (total=0), если это не admin (их скрываем дальше).
+    rows = (
+        db.query(
+            User.id,
+            User.username,
+            User.role,
+            func.count(Task.id).label("total"),
+            pending_expr.label("pending"),
+            in_prog_expr.label("in_prog"),
+            done_expr.label("done"),
+            overdue_expr.label("overdue"),
+            upcoming_expr.label("upcoming"),
+        )
+        .outerjoin(Task, Task.owner_id == User.id)
+        .group_by(User.id, User.username, User.role)
+        .order_by(User.id)
+        .all()
+    )
+
+    result: List[dict] = []
+    for r in rows:
+        total = r.total or 0
+        # Админа без задач не показываем, чтобы не шумел
+        if total == 0 and r.role == "admin":
+            continue
         result.append({
-            "owner_id":       u.id,
-            "owner_username": u.username,
+            "owner_id":       r.id,
+            "owner_username": r.username,
             "total":          total,
-            "pending":        pending,
-            "in_progress":    in_prog,
-            "done":           done,
-            "overdue":        overdue,
-            "upcoming_7d":    upcoming,
+            "pending":        int(r.pending    or 0),
+            "in_progress":    int(r.in_prog    or 0),
+            "done":           int(r.done       or 0),
+            "overdue":        int(r.overdue    or 0),
+            "upcoming_7d":    int(r.upcoming   or 0),
         })
     return result

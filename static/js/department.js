@@ -124,7 +124,10 @@ function renderGroupTable(groupName) {
                 ${isAdmin ? `<br><span style="font-size:0.75em; color:var(--md-primary); font-weight:500;">Квота: ${esc(formatRole(slot.department))}</span>` : ''}
             </td>
             <td><input id="rank-${slot.id}" value="${esc(slot.rank)}" placeholder="Звание"></td>
-            <td><input id="name-${slot.id}" value="${esc(slot.full_name)}" placeholder="Фамилия Имя Отчество"></td>
+            <td style="position:relative;">
+                <input id="name-${slot.id}" value="${esc(slot.full_name)}" placeholder="Фамилия Имя Отчество" autocomplete="off">
+                <div id="suggest-${slot.id}" class="fio-suggest-box hidden"></div>
+            </td>
             <td><input id="doc-${slot.id}"  value="${esc(slot.doc_number)}" placeholder="Номер документа"></td>
             <td>${esc(slot.callsign || '-')}</td>
             <td>
@@ -137,6 +140,145 @@ function renderGroupTable(groupName) {
 
     if (tableWrap) {
         tableWrap.classList.remove('hidden');
+    }
+
+    // Подключаем подсказку поиска из общей базы людей (см. persons/suggest).
+    // Debounce 350мс — не бомбим БД на каждый keystroke.
+    groupSlots.forEach(slot => attachFioSuggest(slot.id));
+}
+
+// ─── Подсказки ФИО из общей базы ─────────────────────────────────────────────
+
+const _suggestTimers = new Map(); // slotId → timer
+
+function attachFioSuggest(slotId) {
+    const input = el(`name-${slotId}`);
+    const box   = el(`suggest-${slotId}`);
+    if (!input || !box) return;
+
+    input.addEventListener('input', () => {
+        const q = input.value.trim();
+        clearTimeout(_suggestTimers.get(slotId));
+
+        if (q.length < 2) {
+            box.classList.add('hidden');
+            box.innerHTML = '';
+            return;
+        }
+
+        const timer = setTimeout(() => fetchSuggestions(slotId, q), 350);
+        _suggestTimers.set(slotId, timer);
+    });
+
+    // Клик вне подсказки — скрываем
+    document.addEventListener('click', (e) => {
+        if (!box.contains(e.target) && e.target !== input) {
+            box.classList.add('hidden');
+        }
+    });
+
+    input.addEventListener('focus', () => {
+        if (box.innerHTML) box.classList.remove('hidden');
+    });
+}
+
+async function fetchSuggestions(slotId, fullName) {
+    const box = el(`suggest-${slotId}`);
+    if (!box) return;
+
+    const rank = el(`rank-${slotId}`)?.value?.trim() || '';
+    const doc  = el(`doc-${slotId}`)?.value?.trim()  || '';
+
+    const params = new URLSearchParams({ full_name: fullName });
+    if (rank) params.append('rank', rank);
+    if (doc)  params.append('doc_number', doc);
+
+    try {
+        const items = await api.get(`/persons/suggest?${params.toString()}`);
+        renderSuggestions(slotId, items);
+    } catch (e) {
+        // При 429 (rate limit) или сетевых — молча гасим, подсказки некритичны
+        box.classList.add('hidden');
+    }
+}
+
+function renderSuggestions(slotId, items) {
+    const box = el(`suggest-${slotId}`);
+    if (!box) return;
+
+    if (!items || items.length === 0) {
+        box.classList.add('hidden');
+        box.innerHTML = '';
+        return;
+    }
+
+    // Если есть точное совпадение с высоким скором — показываем его первым
+    // с плашкой «Уже в базе». Иначе — список кандидатов.
+    const html = items.map(p => {
+        const dept = p.department ? `<span class="fio-dept">(${esc(p.department)})</span>` : '';
+        const score = p.is_exact
+            ? '<span class="fio-badge fio-badge-exact">точное совпадение</span>'
+            : `<span class="fio-badge fio-badge-score">${p.match_score}%</span>`;
+        const extra = [p.rank, p.doc_number].filter(Boolean).map(esc).join(' · ');
+        return `
+            <div class="fio-suggest-item" data-person-id="${p.id}"
+                 data-fio="${esc(p.full_name)}"
+                 data-rank="${esc(p.rank || '')}"
+                 data-doc="${esc(p.doc_number || '')}">
+                <div class="fio-suggest-line">
+                    <span class="fio-name">${esc(p.full_name)}</span>
+                    ${score}
+                    ${dept}
+                </div>
+                ${extra ? `<div class="fio-suggest-extra">${extra}</div>` : ''}
+            </div>
+        `;
+    }).join('');
+
+    box.innerHTML = html;
+    box.classList.remove('hidden');
+
+    // Клик по варианту — применяем через /apply-person
+    box.querySelectorAll('.fio-suggest-item').forEach(div => {
+        div.addEventListener('click', async () => {
+            const personId = parseInt(div.dataset.personId, 10);
+            await applyPersonToSlot(slotId, personId, {
+                full_name:  div.dataset.fio,
+                rank:       div.dataset.rank,
+                doc_number: div.dataset.doc,
+            });
+            box.classList.add('hidden');
+        });
+    });
+}
+
+async function applyPersonToSlot(slotId, personId, fallback) {
+    const tr      = document.querySelector(`tr[data-slot-id="${slotId}"]`);
+    const version = tr && tr.dataset.version ? parseInt(tr.dataset.version, 10) : 1;
+
+    try {
+        const updated = await api.post(`/slots/${slotId}/apply-person`, {
+            person_id: personId,
+            version:   version,
+        });
+
+        // Обновляем поля в DOM из ответа (сервер — источник истины)
+        el(`name-${slotId}`).value = updated.full_name || fallback.full_name || '';
+        el(`rank-${slotId}`).value = updated.rank      || fallback.rank      || '';
+        el(`doc-${slotId}`).value  = updated.doc_number|| fallback.doc_number|| '';
+
+        if (tr && updated.version != null) tr.dataset.version = updated.version;
+
+        if (window.showSnackbar) {
+            window.showSnackbar('Человек применён из общей базы', 'success');
+        }
+    } catch (error) {
+        if (error.status === 409) {
+            showError('Данные изменены другим пользователем, обновляем таблицу...');
+            if (currentEventId) renderMySlots(currentEventId, true);
+        } else {
+            showError('Не удалось применить человека из базы');
+        }
     }
 }
 

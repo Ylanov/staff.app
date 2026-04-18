@@ -103,6 +103,32 @@ class PersonResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
+class PersonSuggestion(BaseModel):
+    """
+    Предложение совпадения из общей базы людей.
+
+    match_score: 0-100, насколько сильно совпадает с тем что вводит пользователь.
+      100 → точное совпадение full_name + rank + doc_number
+      >=85 → очень высокая уверенность, UI может авто-подставлять
+      >=60 → похожее ФИО, но детали различаются — показать как опцию
+      <60  → скорее шум, фильтруется на бэке
+
+    is_exact: true если full_name совпадает побуквенно (регистронезависимо).
+      Фронтенд использует это чтобы подчеркнуть точное совпадение отдельно
+      от fuzzy-вариантов.
+    """
+    id:             int
+    full_name:      str
+    rank:           Optional[str]  = None
+    doc_number:     Optional[str]  = None
+    department:     Optional[str]  = None
+    position_title: Optional[str]  = None
+    match_score:    int
+    is_exact:       bool
+
+    model_config = ConfigDict(from_attributes=True)
+
+
 class ImportRowError(BaseModel):
     row:     int
     message: str
@@ -184,6 +210,142 @@ def search_persons(
             )
         )
     return query.order_by(Person.full_name).limit(limit).all()
+
+
+# ─── Подбор ФИО: поиск совпадений в ОБЩЕЙ базе ───────────────────────────────
+
+@router.get(
+    "/suggest",
+    response_model=List[PersonSuggestion],
+    summary="Подбор человека из общей базы по ФИО (fuzzy)",
+)
+def suggest_persons(
+        full_name:  str           = Query(..., min_length=2, max_length=300),
+        rank:       Optional[str] = Query(None, max_length=100),
+        doc_number: Optional[str] = Query(None, max_length=100),
+        limit:      int           = Query(5, ge=1, le=20),
+        db:         Session       = Depends(get_db),
+        current_user: User        = Depends(get_current_user),
+):
+    """
+    Возвращает кандидатов из ОБЩЕЙ базы (таблица persons).
+
+    Ключевой сценарий:
+      Пользователь добавляет человека в свою таблицу (заполняет слот).
+      Фронт дёргает /persons/suggest с тем что ввели.
+      Если в общей базе уже есть такой человек — возвращаем предложение
+      с match_score. UI может:
+        • при score >= 85 — автоподставить все поля и показать плашку
+          «найден в общей базе управления X»;
+        • при 60-84 — показать список кандидатов для ручного выбора;
+        • при <60 — не мешать, пусть вводит новое.
+      Если никто не подошёл — эндпоинт вернёт пустой список, и фронт
+      сохранит ввод как новую запись через существующий upsert.
+
+    Это ВАЖНО: сама логика создания/обновления persons не меняется.
+    Endpoint /suggest — чисто read-only, подсказка.
+
+    Алгоритм score:
+      • База — pg_trgm similarity(lower(full_name), lower(:q)) × 100.
+        Trigram устойчив к опечаткам, перестановке слов (Иванов Иван vs
+        Иван Иванов), разнице пробелов.
+      • +10 бонус если совпал rank (точно, без регистра).
+      • +15 бонус если совпал doc_number (doc_number — сильный сигнал).
+      • Потолок 100.
+      • Точное совпадение по lower(full_name) всегда даёт 100 и is_exact.
+
+    Видимость:
+      • admin: видит всех кандидатов.
+      • department: видит своих + "общих" (department IS NULL) + тех
+        чьё ФИО совпадает с его — это последний пункт позволяет найти
+        человека которого другой департамент уже зарегистрировал раньше.
+        Именно этот случай — core бизнес-требования: "если человек
+        есть в общей базе, предложить его и применить управление".
+    """
+    q = full_name.strip()
+    if len(q) < 2:
+        return []
+
+    # SQL: similarity() из pg_trgm даёт число 0..1.
+    # Коалесцируем rank/doc_number на пустую строку, иначе NULL != NULL
+    # и бонус не начислится.
+    #
+    # Параметры передаются bind-параметрами (:name_q, :rank_q, :doc_q) —
+    # никакой конкатенации с пользовательскими данными → SQL-инъекция
+    # невозможна.
+    sql = """
+        SELECT
+            id, full_name, rank, doc_number, department, position_title,
+            GREATEST(
+                LEAST(
+                    ROUND(similarity(lower(full_name), lower(:name_q)) * 100)::int
+                    + CASE
+                          WHEN :rank_q <> '' AND lower(COALESCE(rank, '')) = lower(:rank_q)
+                          THEN 10 ELSE 0
+                      END
+                    + CASE
+                          WHEN :doc_q <> '' AND COALESCE(doc_number, '') = :doc_q
+                          THEN 15 ELSE 0
+                      END,
+                    100
+                ),
+                0
+            ) AS score,
+            (lower(full_name) = lower(:name_q)) AS is_exact
+        FROM persons
+        WHERE
+            similarity(lower(full_name), lower(:name_q)) > 0.25
+            OR lower(full_name) LIKE '%' || lower(:name_q) || '%'
+    """
+    params: dict = {
+        "name_q": q,
+        "rank_q": (rank or "").strip(),
+        "doc_q":  (doc_number or "").strip(),
+    }
+
+    # Видимость для не-админа: свои + общие + совпавшие по ФИО.
+    # Совпадение по ФИО даёт департаменту право УВИДЕТЬ запись другого
+    # управления (но не редактировать — это запрещено в update_person).
+    # Так фронтенд может показать плашку "этот человек уже есть у upr_3,
+    # применить его?" и после подтверждения — выполнить upsert через
+    # обычный /slots PATCH, где department обновится на текущего юзера.
+    if current_user.role != "admin":
+        sql += (
+            " AND (department = :user_dept "
+            "      OR department IS NULL "
+            "      OR lower(full_name) = lower(:name_q))"
+        )
+        params["user_dept"] = current_user.username
+
+    sql += """
+        ORDER BY
+            is_exact DESC,
+            score DESC,
+            full_name ASC
+        LIMIT :lim
+    """
+    params["lim"] = limit
+
+    rows = db.execute(text(sql), params).mappings().all()
+
+    # Отсекаем слабых кандидатов (score < 40). Они попадают в выборку
+    # за счёт LIKE-подстроки, но для UI это шум.
+    result: List[PersonSuggestion] = []
+    for r in rows:
+        if r["score"] < 40 and not r["is_exact"]:
+            continue
+        result.append(PersonSuggestion(
+            id=             r["id"],
+            full_name=      r["full_name"],
+            rank=           r["rank"],
+            doc_number=     r["doc_number"],
+            department=     r["department"],
+            position_title= r["position_title"],
+            match_score=    int(r["score"]),
+            is_exact=       bool(r["is_exact"]),
+        ))
+
+    return result
 
 
 # ─── Скачать шаблон Excel ─────────────────────────────────────────────────────

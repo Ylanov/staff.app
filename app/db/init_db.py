@@ -22,13 +22,61 @@
     gunicorn app.main:app  ← запускает воркеры (init_db без create_all)
 """
 
+import os
 import secrets
+import sys
 from sqlalchemy.orm import Session
 from sqlalchemy import text
 
 from app.models.user import User
 from app.core.security import get_password_hash
 from app.core.config import settings
+
+
+def _emit_admin_password(password: str, source: str, is_reset: bool) -> None:
+    """
+    Вывод пароля администратора — безопасно.
+
+    Раньше пароль печатался в stdout (попадает в docker logs / journalctl
+    и может остаться в истории навечно). Теперь:
+      - Если задан ADMIN_PASSWORD_FILE — сохраняем туда (режим 600)
+        и в лог пишем только путь. Это предпочтительный способ для prod.
+      - Если в env ADMIN_PASSWORD задан пользователем — ничего не выводим
+        (админ сам знает пароль, незачем его дублировать в логи).
+      - Иначе (сгенерирован автоматически) — выводим В STDERR один раз,
+        без обрамляющих рамок, чтобы было видно что это сенситивная строка.
+        Это запасной путь для локальной разработки.
+    """
+    file_path = os.environ.get("ADMIN_PASSWORD_FILE")
+    title = "сброшен" if is_reset else "создан"
+
+    if file_path:
+        try:
+            with open(file_path, "w", encoding="utf-8") as f:
+                f.write(password + "\n")
+            try:
+                os.chmod(file_path, 0o600)
+            except Exception:
+                pass
+            print(f"✅ Пароль администратора {title}. Сохранён в {file_path} ({source}).")
+            return
+        except Exception as e:
+            print(f"⚠️  Не удалось записать ADMIN_PASSWORD_FILE ({file_path}): {e}")
+
+    if source.startswith("из переменной окружения"):
+        # Админ сам задал пароль — не дублируем его в логи
+        print(f"✅ Пароль администратора {title} (взят из ADMIN_PASSWORD).")
+        return
+
+    # Сгенерирован автоматически — выводим только в stderr, один раз
+    print(
+        f"\n⚠️  Сгенерирован пароль администратора (логин: admin). "
+        f"Сохраните его сейчас — больше показан не будет:\n"
+        f"    {password}\n"
+        f"Рекомендуется задать ADMIN_PASSWORD или ADMIN_PASSWORD_FILE "
+        f"в .env для production.\n",
+        file=sys.stderr,
+    )
 
 
 def init_db(db: Session) -> None:
@@ -63,18 +111,14 @@ def init_db(db: Session) -> None:
             new_password = settings.ADMIN_PASSWORD
             source = "из переменной окружения ADMIN_PASSWORD"
         else:
-            new_password = secrets.token_urlsafe(16)
-            source = "сгенерирован автоматически (сохраните!)"
+            new_password = secrets.token_urlsafe(18)
+            source = "сгенерирован автоматически"
 
         admin_user.hashed_password = get_password_hash(new_password)
         db.commit()
 
-        print("=" * 60)
-        print("🔑  Пароль администратора сброшен!")
-        print(f"    Логин:  admin")
-        print(f"    Пароль: {new_password}  ({source})")
-        print("    Снимите флаг RESET_ADMIN_PASSWORD=false после перезапуска")
-        print("=" * 60)
+        _emit_admin_password(new_password, source, is_reset=True)
+        print("   Снимите флаг RESET_ADMIN_PASSWORD=false после перезапуска.")
         return
 
     if admin_user:
@@ -86,8 +130,8 @@ def init_db(db: Session) -> None:
         password        = settings.ADMIN_PASSWORD
         password_source = "из переменной окружения ADMIN_PASSWORD"
     else:
-        password        = secrets.token_urlsafe(16)
-        password_source = "сгенерирован автоматически (сохраните его!)"
+        password        = secrets.token_urlsafe(18)
+        password_source = "сгенерирован автоматически"
 
     new_admin = User(
         username="admin",
@@ -98,8 +142,4 @@ def init_db(db: Session) -> None:
     db.add(new_admin)
     db.commit()
 
-    print("=" * 60)
-    print("✅  Суперпользователь 'admin' создан!")
-    print(f"    Логин:  admin")
-    print(f"    Пароль: {password}  ({password_source})")
-    print("=" * 60)
+    _emit_admin_password(password, password_source, is_reset=False)

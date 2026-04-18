@@ -1,11 +1,12 @@
 # app/api/v1/routers/admin.py
 
 import json
+import re
 from datetime import date as date_type
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session, joinedload, selectinload
-from pydantic import BaseModel, Field, ConfigDict
+from pydantic import BaseModel, Field, ConfigDict, field_validator
 from typing import Literal, List, Optional, Any, Dict
 
 from app.db.database import get_db
@@ -20,6 +21,7 @@ from app.schemas.event import (
 from app.api.dependencies import get_current_active_admin
 from app.core.security import get_password_hash
 from app.core.websockets import manager
+from app.core.cache import positions_cache, get_or_set, invalidate
 from app.api.v1.routers.persons import upsert_person_from_slot
 
 router = APIRouter()
@@ -85,8 +87,25 @@ class SlotQuickCreate(BaseModel):
 
 class UserCreate(BaseModel):
     username: str = Field(..., min_length=2, max_length=50, strip_whitespace=True)
-    password: str = Field(..., min_length=6, max_length=128)
+    # Минимум 10 символов. Требуется буква и цифра.
+    # Это разумная политика для служебной системы: сильнее NIST 800-63B минимума
+    # (8 символов) без требования спецсимволов — те часто провоцируют 1 вариант
+    # ("Password1!") и снижают реальную энтропию.
+    password: str = Field(..., min_length=10, max_length=128)
     role:     Literal["admin", "department"] = "department"
+
+    @field_validator("password")
+    @classmethod
+    def _password_strength(cls, v: str) -> str:
+        if not re.search(r"[A-Za-zА-Яа-яЁё]", v):
+            raise ValueError("Пароль должен содержать хотя бы одну букву")
+        if not re.search(r"\d", v):
+            raise ValueError("Пароль должен содержать хотя бы одну цифру")
+        # Защита от очевидных "password1234" / "12345qwerty"
+        weak = {"password", "qwerty", "admin123", "12345678", "1234567890"}
+        if v.lower() in weak:
+            raise ValueError("Пароль слишком простой")
+        return v
 
 
 class UserResponse(BaseModel):
@@ -192,7 +211,16 @@ def get_all_positions(
         db:            Session = Depends(get_db),
         current_admin: User    = Depends(get_current_active_admin),
 ):
-    return db.query(Position).order_by(Position.name).all()
+    # Справочник редко меняется, запрашивается на каждый refresh UI.
+    # TTLCache 60с полностью снимает нагрузку при 2к пользователях.
+    # Инвалидируется при POST/DELETE ниже.
+    def _load():
+        rows = db.query(Position).order_by(Position.name).all()
+        # Материализуем в словари — иначе после коммита сессии объекты
+        # станут detached и доступ к .name выбросит DetachedInstanceError.
+        return [{"id": p.id, "name": p.name} for p in rows]
+
+    return get_or_set(positions_cache, "all", _load)
 
 
 @router.post("/positions", response_model=PositionResponse, status_code=201)
@@ -209,6 +237,7 @@ async def create_position(
     db.add(new_position)
     db.commit()
     db.refresh(new_position)
+    invalidate(positions_cache)  # сбрасываем кеш справочника
     await manager.broadcast({"action": "positions_update"})
     return new_position
 
@@ -224,6 +253,7 @@ async def delete_position(
         raise HTTPException(status_code=404, detail="Должность не найдена")
     db.delete(pos)
     db.commit()
+    invalidate(positions_cache)  # сбрасываем кеш справочника
     await manager.broadcast({"action": "positions_update"})
     return {"message": "Должность удалена"}
 

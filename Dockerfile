@@ -52,10 +52,12 @@ RUN pip install --no-cache-dir --no-index --find-links=/install /install/*.whl
 
 COPY . .
 
-RUN chown -R appuser:appuser /code
+# entrypoint.sh применяет миграции перед запуском gunicorn
+RUN chmod +x /code/entrypoint.sh && chown -R appuser:appuser /code
 
 USER appuser
 
 EXPOSE 8000
 
-CMD ["gunicorn", "app.main:app", "-k", "uvicorn.workers.UvicornWorker", "-w", "1", "-b", "0.0.0.0:8000"]
+ENTRYPOINT ["/code/entrypoint.sh"]
+CMD ["gunicorn", "app.main:app", "-k", "uvicorn.workers.UvicornWorker", "-w", "4", "-b", "0.0.0.0:8000"]

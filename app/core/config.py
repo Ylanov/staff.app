@@ -35,6 +35,25 @@ class Settings(BaseSettings):
     # В dev можно оставить "*", но тогда allow_credentials должен быть False.
     ALLOWED_ORIGINS: str = "*"
 
+    # ─── Rate limiting (защита от brute-force) ────────────────────────────────
+    # Лимит попыток авторизации на IP (формат SlowAPI: "N/period").
+    # Можно переопределить в .env: LOGIN_RATE_LIMIT=10/minute
+    LOGIN_RATE_LIMIT: str = "10/minute"
+    # Общий лимит на все эндпоинты (защита от DoS одним клиентом).
+    # Считается per-IP. Нулевое значение или пустая строка — выключено.
+    GLOBAL_RATE_LIMIT: str = "300/minute"
+
+    # ─── Пул соединений БД (тюнится под количество gunicorn-воркеров) ─────────
+    # Реальные соединения = DB_POOL_SIZE × число_воркеров.
+    # Плюс резерв на max_overflow. По умолчанию postgres max_connections=100 —
+    # поэтому значения ниже держим умеренными: 4 воркера × (10+15) = 100.
+    # Если используете pgbouncer в pool_mode=transaction — можно увеличить.
+    DB_POOL_SIZE:     int = 10
+    DB_MAX_OVERFLOW:  int = 15
+    DB_POOL_TIMEOUT:  int = 30    # сколько ждать свободное соединение из пула
+    DB_POOL_RECYCLE:  int = 3600  # пересоздавать коннект старше часа
+    DB_ECHO:          bool = False  # логировать ВСЕ SQL-запросы (только для debug)
+
     @property
     def DATABASE_URI(self) -> str:
         return (
@@ -68,12 +87,22 @@ class Settings(BaseSettings):
         В production дефолтный SECRET_KEY недопустим — любой может подделать JWT.
         Приложение не стартует пока ключ не заменён на случайный.
         Сгенерировать: python -c "import secrets; print(secrets.token_hex(32))"
+
+        Также проверяем минимальную длину: HS256-ключ короче 32 символов
+        подбирается брутфорсом за разумное время, это известная атака.
         """
-        if self.ENV == "production" and self.SECRET_KEY == "change-me":
-            raise ValueError(
-                "SECRET_KEY не может быть 'change-me' в production. "
-                "Задайте переменную окружения SECRET_KEY."
-            )
+        if self.ENV == "production":
+            if self.SECRET_KEY == "change-me":
+                raise ValueError(
+                    "SECRET_KEY не может быть 'change-me' в production. "
+                    "Задайте переменную окружения SECRET_KEY (минимум 32 символа)."
+                )
+            if len(self.SECRET_KEY) < 32:
+                raise ValueError(
+                    f"SECRET_KEY слишком короткий ({len(self.SECRET_KEY)} символов). "
+                    "Требуется минимум 32 символа. "
+                    'Сгенерируйте: python -c "import secrets; print(secrets.token_hex(32))"'
+                )
         return self
 
     model_config = {
