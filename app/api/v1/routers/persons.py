@@ -589,37 +589,87 @@ async def import_persons_from_excel(
 
 # ─── CRUD ─────────────────────────────────────────────────────────────────────
 
-@router.get("", response_model=List[PersonResponse], summary="Получить базу людей")
+@router.get("", summary="Получить базу людей")
 def get_all_persons(
         db:   Session = Depends(get_db),
         current_user: User = Depends(get_current_user),
         skip:  int = Query(0, ge=0),
         limit: int = Query(500, ge=1, le=2000),
         q:     Optional[str] = Query(None),
+        page:  Optional[int] = Query(None, ge=1),
+        sort:  str = Query("full_name", regex="^(full_name|rank|doc_number|department|created_at)$"),
+        order: str = Query("asc", regex="^(asc|desc)$"),
+        unassigned: bool = Query(False),
 ):
     """
-    Admin видит всех.
-    Department видит свои (department == username) + "общие" (department IS NULL).
+    База людей с гибким режимом ответа (обратная совместимость).
 
-    ИСПРАВЛЕНО: раньше department видел ТОЛЬКО свои, и ~700 общих записей
-    (с department='' от старых импортов — нормализованы в NULL миграцией
-    b2c3d4e5f6a7) были недоступны. Это именно "общая база людей" из ТЗ:
-    все управления видят общий справочник, но редактируют только свои.
-    Фильтр совпадает с /persons/search.
+    Видимость:
+      • admin: все записи.
+      • department: свои (department == username) + "общие" (department IS NULL).
+        "Общие" = те кого импортировали без управления — общий резерв,
+        доступный всем для выбора и применения к себе через /apply-person.
+      • unassigned=true (только для department): только "общие" (IS NULL).
+        Удобно показать отдельно во вкладке "Личный состав".
+
+    Формат ответа:
+      • Без параметра page — плоский список List[PersonResponse] (старый
+        контракт, используется в admin-UI /ui.js и автодополнениях).
+      • С параметром page — пагинированный объект:
+            {items, total, page, pages, limit}
+        используется в dept_persons.js со страницами и сортировкой.
+
+    Сортировка по полям full_name | rank | doc_number | department | created_at.
+
+    ИСПРАВЛЕНО: раньше department видел ТОЛЬКО свои (filter ==username),
+    и ~700 общих записей были недоступны. Теперь фильтр совпадает
+    с /persons/search и включает IS NULL.
     """
-    from sqlalchemy import or_
+    from sqlalchemy import or_, desc as sa_desc, asc as sa_asc
 
     query = db.query(Person)
+
+    # ── Видимость по роли ─────────────────────────────────────────────────────
     if current_user.role != "admin":
-        query = query.filter(
-            or_(
-                Person.department == current_user.username,
-                Person.department.is_(None),
+        if unassigned:
+            query = query.filter(Person.department.is_(None))
+        else:
+            query = query.filter(
+                or_(
+                    Person.department == current_user.username,
+                    Person.department.is_(None),
+                )
             )
-        )
+    elif unassigned:
+        # для admin unassigned=true тоже работает — показать "ничьи"
+        query = query.filter(Person.department.is_(None))
+
     if q:
         query = query.filter(Person.full_name.ilike(f"%{q}%"))
-    return query.order_by(Person.full_name).offset(skip).limit(limit).all()
+
+    # ── Сортировка ────────────────────────────────────────────────────────────
+    sort_col = getattr(Person, sort, Person.full_name)
+    direction = sa_desc if order == "desc" else sa_asc
+    # NULL всегда в конце — чтобы "общие" (department IS NULL) не лезли наверх
+    # при сортировке по department
+    query = query.order_by(direction(sort_col).nullslast(), Person.id.asc())
+
+    # ── Paginated режим ───────────────────────────────────────────────────────
+    if page is not None:
+        total = query.count()
+        pages = max(1, (total + limit - 1) // limit)
+        items = query.offset((page - 1) * limit).limit(limit).all()
+        return {
+            "items":  [PersonResponse.model_validate(p) for p in items],
+            "total":  total,
+            "page":   page,
+            "pages":  pages,
+            "limit":  limit,
+        }
+
+    # ── Flat list режим (старый контракт) ─────────────────────────────────────
+    rows = query.offset(skip).limit(limit).all()
+    return [PersonResponse.model_validate(p) for p in rows]
 
 
 @router.post("", response_model=PersonResponse, status_code=status.HTTP_201_CREATED,

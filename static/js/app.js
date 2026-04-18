@@ -19,12 +19,15 @@ window.app = {
 
 let _tasksDeptInited = false;
 
+let _deptPersonsInited = false;
+
 function switchDeptTab(tab) {
     document.getElementById('dept-event-cards')?.classList.add('hidden');
     document.getElementById('dept-content')?.classList.add('hidden');
     document.getElementById('dept-combat-calc')?.classList.add('hidden');
     document.getElementById('dept-duty-panel')?.classList.add('hidden');
     document.getElementById('dept-tasks-panel')?.classList.add('hidden');
+    document.getElementById('dept-persons-panel')?.classList.add('hidden');
 
     // Сбрасываем активный стиль у всех кнопок управления
     const resetBtn = (id) => {
@@ -33,7 +36,8 @@ function switchDeptTab(tab) {
         b.classList.remove('btn-filled');
         b.classList.add('btn-outlined');
     };
-    ['dept-main-tab-btn', 'cc-dept-tab-btn', 'dept-duty-tab-btn', 'dept-tasks-tab-btn'].forEach(resetBtn);
+    ['dept-main-tab-btn', 'cc-dept-tab-btn', 'dept-duty-tab-btn',
+     'dept-tasks-tab-btn', 'dept-persons-tab-btn'].forEach(resetBtn);
 
     const activateBtn = (id) => {
         const b = document.getElementById(id);
@@ -62,6 +66,19 @@ function switchDeptTab(tab) {
                 _tasksDeptInited = true;
             } else {
                 m.reloadTasks();
+            }
+        });
+    } else if (tab === 'persons') {
+        document.getElementById('dept-persons-panel')?.classList.remove('hidden');
+        activateBtn('dept-persons-tab-btn');
+        // Lazy-init: первая активация рисует Shell (тулбар/таблица/форма),
+        // дальше только reload данных.
+        import('./dept_persons.js').then(m => {
+            if (!_deptPersonsInited) {
+                m.initDeptPersons();
+                _deptPersonsInited = true;
+            } else {
+                m.loadDeptPersons();
             }
         });
     }
@@ -159,11 +176,12 @@ function bindEvents() {
         }
     });
 
-    // Вкладки управления (Списки / Графики / Боевой расчёт / Календарь)
-    document.getElementById('dept-main-tab-btn')?.addEventListener('click',  () => switchDeptTab('lists'));
-    document.getElementById('cc-dept-tab-btn')?.addEventListener('click',    () => switchDeptTab('combat'));
-    document.getElementById('dept-duty-tab-btn')?.addEventListener('click',  () => switchDeptTab('duty'));
-    document.getElementById('dept-tasks-tab-btn')?.addEventListener('click', () => switchDeptTab('tasks'));
+    // Вкладки управления (Списки / Графики / Боевой расчёт / Календарь / База людей)
+    document.getElementById('dept-main-tab-btn')?.addEventListener('click',    () => switchDeptTab('lists'));
+    document.getElementById('cc-dept-tab-btn')?.addEventListener('click',      () => switchDeptTab('combat'));
+    document.getElementById('dept-duty-tab-btn')?.addEventListener('click',    () => switchDeptTab('duty'));
+    document.getElementById('dept-tasks-tab-btn')?.addEventListener('click',   () => switchDeptTab('tasks'));
+    document.getElementById('dept-persons-tab-btn')?.addEventListener('click', () => switchDeptTab('persons'));
 
     // ── Инициализация UI-компонентов (без API-вызовов) ────────────────────────
     ui.initPersonsTab();
