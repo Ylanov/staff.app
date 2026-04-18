@@ -230,12 +230,18 @@ function _renderDashboard(data) {
 
     container.innerHTML = html;
 
-    // Клик по карточке → открыть список в режиме просмотра (модалка с таблицей),
-    // ровно так же, как кнопка «👁 Просмотр» во вкладке История.
+    // Клик по карточке:
+    //   admin   → открыть редактор (event_editor.js) — inline-правка с FIO suggest,
+    //             realtime broadcast в dept через manager.broadcast.
+    //   dept    → readonly-модалка (history.openEventReadonly).
     container.querySelectorAll('.db-event-card[data-event-id]').forEach(card => {
         card.addEventListener('click', () => {
             const eventId = parseInt(card.dataset.eventId, 10);
-            import('./history.js').then(m => m.openEventReadonly(eventId));
+            if (window.currentUserRole === 'admin' && window.openEventEditor) {
+                window.openEventEditor(eventId);
+            } else {
+                import('./history.js').then(m => m.openEventReadonly(eventId));
+            }
         });
     });
 }

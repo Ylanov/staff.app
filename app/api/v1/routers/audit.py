@@ -36,7 +36,18 @@ from app.models.event import Slot
 from app.core.audit import log_change, snapshot, compute_diff
 from app.core.websockets import manager
 
-audit_router         = APIRouter()
+# Админский суб-роутер: /admin/audit-log и /admin/audit-log/day-counts.
+# Монтируется в main.py под prefix /api/v1/admin.
+audit_admin_router = APIRouter()
+
+# Общий суб-роутер для slot-history и revert — и admin, и department (свои).
+# Монтируется под /api/v1 без /admin-префикса, т.к. department-пользователи
+# тоже обращаются (смотрят историю своих слотов).
+slot_history_router = APIRouter()
+
+# Backward-compat алиас: в main.py раньше был audit_router.
+# Оставим для плавного переключения.
+audit_router         = audit_admin_router
 notifications_router = APIRouter()
 
 
@@ -87,7 +98,7 @@ class NotificationPage(BaseModel):
 
 # ─── Audit log ───────────────────────────────────────────────────────────────
 
-@audit_router.get(
+@audit_admin_router.get(
     "/audit-log",
     response_model=AuditLogPage,
     summary="Общий журнал изменений (админ)",
@@ -128,7 +139,7 @@ def get_audit_log(
     )
 
 
-@audit_router.get(
+@audit_admin_router.get(
     "/audit-log/day-counts",
     summary="Счётчики audit-записей по дням в диапазоне (для календарного вида)",
 )
@@ -202,7 +213,7 @@ _SLOT_AUDIT_FIELDS = (
 
 # ─── История конкретного слота ───────────────────────────────────────────────
 
-@audit_router.get(
+@slot_history_router.get(
     "/slots/{slot_id}/history",
     response_model=List[AuditLogEntry],
     summary="История изменений одного слота",
@@ -237,7 +248,7 @@ def get_slot_history(
 
 # ─── Откат слота ─────────────────────────────────────────────────────────────
 
-@audit_router.post(
+@slot_history_router.post(
     "/slots/{slot_id}/revert/{audit_id}",
     summary="Откатить слот к состоянию ДО указанной audit-записи",
 )

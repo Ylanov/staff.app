@@ -67,7 +67,10 @@ class ColumnsUpdatePayload(BaseModel):
 class SlotAdminUpdate(BaseModel):
     version:     int
     position_id: Optional[int]  = None
-    department:  str            = Field(..., min_length=1, max_length=100)
+    # Квота: пустая строка допустима — admin может снять привязку к управлению
+    # ("— без квоты —" в UI). Раньше была min_length=1, которая ломала
+    # inline-сохранение с дашборда когда admin выбирал пустую квоту.
+    department:  str            = Field(default="", max_length=100)
     callsign:    Optional[str]  = Field(default=None, max_length=50)
     note:        Optional[str]  = Field(default=None, max_length=500)
     full_name:   Optional[str]  = Field(default=None, max_length=300)

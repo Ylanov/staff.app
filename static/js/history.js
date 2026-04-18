@@ -477,7 +477,13 @@ function _renderDayPanel() {
     });
     panel.querySelectorAll('[data-event-id]').forEach(row => {
         row.addEventListener('click', () => {
-            openEventReadonly(parseInt(row.dataset.eventId, 10));
+            const eid = parseInt(row.dataset.eventId, 10);
+            // admin → editable; dept не видит вкладку История, но на всякий случай
+            if (window.currentUserRole === 'admin' && window.openEventEditor) {
+                window.openEventEditor(eid);
+            } else {
+                openEventReadonly(eid);
+            }
         });
     });
 }

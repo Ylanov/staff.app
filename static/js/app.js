@@ -14,6 +14,8 @@ import './slot_history.js';
 // Центр уведомлений — инициализируется через notifications.initNotifications()
 // вызываемый в auth.js после логина (чтобы /notifications не дёргался до JWT).
 import * as notifications from './notifications.js';
+// Редактор списка для админа на дашборде — регистрирует window.openEventEditor
+import './event_editor.js';
 
 window.app = {
     deleteUser:      admin.deleteUser,

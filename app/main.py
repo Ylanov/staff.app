@@ -114,10 +114,11 @@ app.include_router(dept_duty.router,       prefix="/api/v1/dept",    tags=["Гр
 app.include_router(tasks.router,           prefix="/api/v1/tasks",   tags=["Календарь задач"])
 
 # Аудит и уведомления.
-# audit_router содержит админский /audit-log и общие /slots/.../history /revert,
-# поэтому подключаем его под /api/v1 (без /admin-префикса); admin-only
-# проверяется внутри конкретного handler'а.
-app.include_router(audit_module.audit_router,         prefix="/api/v1",               tags=["Аудит"])
+# audit_admin_router — админский /admin/audit-log и /admin/audit-log/day-counts.
+# slot_history_router — /slots/{id}/history и /slots/{id}/revert/{aid},
+# доступен и админу, и department'у (своей истории); поэтому без /admin.
+app.include_router(audit_module.audit_admin_router,   prefix="/api/v1/admin",         tags=["Аудит (admin)"])
+app.include_router(audit_module.slot_history_router,  prefix="/api/v1",               tags=["История слотов"])
 app.include_router(audit_module.notifications_router, prefix="/api/v1/notifications", tags=["Уведомления"])
 
 # ─── Боевой расчёт ────────────────────────────────────────────────────────────
