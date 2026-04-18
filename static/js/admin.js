@@ -229,10 +229,15 @@ async function renderAdminEditor(eventId, isSilentUpdate = false) {
         }
 
         // ── Динамический заголовок таблицы ────────────────────────────────────
+        // + чекбокс «выделить все» в первой колонке — для bulk-операций
+        // (массовое переназначение квоты / очистка ФИО в шаблоне).
         const thead = el('master-table')?.querySelector('thead');
         if (thead) {
             thead.innerHTML = `
                 <tr>
+                    <th style="width:30px; text-align:center;">
+                        <input type="checkbox" class="editor-row-check" id="editor-select-all" title="Выделить все">
+                    </th>
                     <th style="width:30px;">№</th>
                     ${visibleCols.map(col => `<th>${esc(col.label)}</th>`).join('')}
                     <th style="width:40px;"></th>
@@ -241,11 +246,14 @@ async function renderAdminEditor(eventId, isSilentUpdate = false) {
 
         // ── Тело таблицы ──────────────────────────────────────────────────────
         let globalIndex = 1;
-        const colspan   = visibleCols.length + 2; // № + столбцы + кнопка удаления
+        const colspan   = visibleCols.length + 3; // чекбокс + № + столбцы + действия
 
         const tableHtml = data.groups.map(group => {
             const slotRows = group.slots.map(slot => `
                 <tr data-slot-id="${slot.id}" data-version="${slot.version || 1}">
+                    <td style="text-align:center;">
+                        <input type="checkbox" class="editor-row-check" data-slot-check="${slot.id}">
+                    </td>
                     <td style="text-align:center; color:var(--md-on-surface-hint); font-size:0.78rem;">${globalIndex++}</td>
                     ${visibleCols.map(col => buildCell(col, slot)).join('')}
                     <td style="text-align:center;">
@@ -282,6 +290,8 @@ async function renderAdminEditor(eventId, isSilentUpdate = false) {
 
         el('master-tbody').innerHTML = tableHtml;
 
+        _bindBulkEditor();
+
         _applyEditorFilters();
         _updateEditorStats();
 
@@ -296,6 +306,161 @@ async function renderAdminEditor(eventId, isSilentUpdate = false) {
         console.error('renderAdminEditor:', e);
         showError(`Ошибка загрузки редактора: ${e.message ?? e}`);
     }
+}
+
+// ─── Bulk-actions в редакторе (чекбоксы + массовое переназначение) ──────────
+// Стейт локальный к модулю, очищается при каждом _bindBulkEditor.
+let _bulkBound = false;
+
+function _getCheckedSlotIds() {
+    return Array.from(document.querySelectorAll('[data-slot-check]:checked'))
+        .map(cb => parseInt(cb.dataset.slotCheck, 10));
+}
+
+function _updateBulkBar() {
+    const ids = _getCheckedSlotIds();
+    const bar = document.getElementById('editor-bulk-bar');
+    const cnt = document.getElementById('editor-bulk-count');
+    if (!bar) return;
+    if (ids.length === 0) {
+        bar.classList.add('hidden');
+    } else {
+        bar.classList.remove('hidden');
+        if (cnt) cnt.textContent = ids.length;
+    }
+    // Подсветка строк с чекнутыми чекбоксами
+    document.querySelectorAll('#master-tbody tr[data-slot-id]').forEach(tr => {
+        const cb = tr.querySelector('[data-slot-check]');
+        tr.classList.toggle('editor-row--checked', !!cb?.checked);
+    });
+}
+
+function _bindBulkEditor() {
+    // Чекбоксы в строках
+    document.querySelectorAll('[data-slot-check]').forEach(cb => {
+        cb.onchange = _updateBulkBar;
+    });
+    // «Выделить все» в шапке
+    const all = document.getElementById('editor-select-all');
+    if (all) {
+        all.onchange = () => {
+            document.querySelectorAll('[data-slot-check]').forEach(cb => {
+                // Чекаем только видимые (не скрытые фильтром) строки
+                const tr = cb.closest('tr');
+                if (tr && tr.style.display !== 'none') cb.checked = all.checked;
+            });
+            _updateBulkBar();
+        };
+    }
+
+    // Глобальные кнопки — биндим один раз (на весь жизненный цикл страницы)
+    if (!_bulkBound) {
+        _bulkBound = true;
+        document.getElementById('editor-bulk-clear')?.addEventListener('click', () => {
+            document.querySelectorAll('[data-slot-check]').forEach(cb => cb.checked = false);
+            const all = document.getElementById('editor-select-all');
+            if (all) all.checked = false;
+            _updateBulkBar();
+        });
+        document.getElementById('editor-bulk-reassign')?.addEventListener('click', _openBulkReassignModal);
+    }
+
+    _updateBulkBar();
+}
+
+function _openBulkReassignModal() {
+    const ids = _getCheckedSlotIds();
+    if (ids.length === 0) return;
+
+    // Опции department — берём из списка активных управлений.
+    // availableDepartments заполняется в loadUsers (у админа).
+    const deptOpts = ['<option value="">— не менять —</option>']
+        .concat((availableDepartments || []).map(u =>
+            `<option value="${esc(u)}">${esc(formatRole(u))}</option>`
+        ))
+        .concat(['<option value="__CLEAR__" style="color:#b91c1c;">— снять квоту —</option>'])
+        .join('');
+
+    document.getElementById('bulk-reassign-modal')?.remove();
+    const modal = document.createElement('div');
+    modal.id = 'bulk-reassign-modal';
+    modal.className = 'bulk-reassign-modal';
+    modal.innerHTML = `
+        <div class="bulk-reassign-modal__dialog">
+            <h3 class="bulk-reassign-modal__title">Массовое переназначение</h3>
+            <p class="bulk-reassign-modal__hint">
+                Выбрано строк: <b>${ids.length}</b>.
+                Экстренная замена людей в шаблоне: смените квоту — другое управление
+                начнёт заполнять, а старое получит уведомление.
+            </p>
+
+            <div class="bulk-reassign-modal__section">
+                <label class="bulk-reassign-modal__label" for="bulk-re-dept">Новая квота</label>
+                <select id="bulk-re-dept" style="width:100%; padding:6px 8px;
+                        border:1px solid var(--md-outline-variant); border-radius:var(--md-radius-sm);
+                        background:var(--md-surface); font-size:0.88rem; outline:none;">
+                    ${deptOpts}
+                </select>
+            </div>
+
+            <div class="bulk-reassign-modal__section">
+                <label class="bulk-reassign-modal__label">Очистить поля у этих строк</label>
+                <label class="bulk-reassign-modal__checkrow">
+                    <input type="checkbox" id="bulk-re-clear-name">
+                    ФИО, звание и № документа
+                </label>
+                <label class="bulk-reassign-modal__checkrow">
+                    <input type="checkbox" id="bulk-re-clear-callsign">
+                    Позывной
+                </label>
+                <label class="bulk-reassign-modal__checkrow">
+                    <input type="checkbox" id="bulk-re-clear-note">
+                    Примечание
+                </label>
+            </div>
+
+            <div class="bulk-reassign-modal__actions">
+                <button id="bulk-re-cancel" class="btn btn-outlined btn-sm" type="button">Отмена</button>
+                <button id="bulk-re-apply"  class="btn btn-success  btn-sm" type="button">Применить</button>
+            </div>
+        </div>
+    `;
+    document.body.appendChild(modal);
+
+    modal.addEventListener('click', (e) => { if (e.target === modal) modal.remove(); });
+    document.getElementById('bulk-re-cancel').addEventListener('click', () => modal.remove());
+
+    document.getElementById('bulk-re-apply').addEventListener('click', async () => {
+        const deptRaw = document.getElementById('bulk-re-dept').value;
+        const payload = {
+            slot_ids:       ids,
+            clear_name:     document.getElementById('bulk-re-clear-name').checked,
+            clear_callsign: document.getElementById('bulk-re-clear-callsign').checked,
+            clear_note:     document.getElementById('bulk-re-clear-note').checked,
+        };
+        if (deptRaw === '__CLEAR__') payload.department = '';
+        else if (deptRaw)             payload.department = deptRaw;
+
+        // Если ничего не выбрано — нечего делать
+        if (payload.department === undefined
+            && !payload.clear_name
+            && !payload.clear_callsign
+            && !payload.clear_note) {
+            showError('Выберите что изменить');
+            return;
+        }
+
+        try {
+            const res = await api.post('/admin/slots/bulk-patch', payload);
+            notify(`Обновлено строк: ${res.updated}`);
+            modal.remove();
+            // Перезагружаем редактор с актуальными данными
+            if (currentEditorEventId) await renderAdminEditor(currentEditorEventId);
+        } catch (e) {
+            console.error('bulk-patch:', e);
+            showError(`Ошибка: ${e.message ?? 'неизвестная'}`);
+        }
+    });
 }
 
 // ─── Фильтры редактора (поиск, управление, незаполненные) ───────────────────
@@ -1294,14 +1459,36 @@ function fmtIso(d) {
     return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
 }
 
-function buildTemplateRow(dayKey, selectedId, rowIdx, showRemove) {
+// generatedTplIds — множество tpl-id которые уже сгенерированы на текущий день.
+// Передаём в row чтобы пометить опции «уже создан» + дизейблить их.
+// usedInOtherRows — tpl-id уже выбранные в соседних select'ах этого же дня
+// (защита от выбора одного шаблона дважды в один день).
+function buildTemplateRow(dayKey, selectedId, rowIdx, showRemove,
+                          generatedTplIds = new Set(),
+                          usedInOtherRows = new Set()) {
     const events    = getCachedEvents();
     const templates = events.filter(e => e.is_template);
-    const opts = templates.map(t =>
-        `<option value="${t.id}" ${String(t.id) === String(selectedId) ? 'selected' : ''}>${esc(t.title)}</option>`
-    ).join('');
+
+    const opts = templates.map(t => {
+        const isSelected  = String(t.id) === String(selectedId);
+        const alreadyGen  = generatedTplIds.has(t.id);
+        const usedInOther = usedInOtherRows.has(String(t.id)) && !isSelected;
+        const disabled    = (alreadyGen || usedInOther) && !isSelected;
+        const suffix      = alreadyGen  ? ' ✓ уже создан'
+                          : usedInOther ? ' · уже выбран в этом дне'
+                          : '';
+        return `<option value="${t.id}"
+                        ${isSelected ? 'selected' : ''}
+                        ${disabled  ? 'disabled'  : ''}>${esc(t.title)}${suffix}</option>`;
+    }).join('');
+
+    // Подсвечиваем ряд если выбран шаблон который уже сгенерирован
+    const rowClass = generatedTplIds.has(parseInt(selectedId))
+        ? 'sched-tpl-row sched-tpl-row--already'
+        : 'sched-tpl-row';
+
     return `
-        <div class="sched-tpl-row" style="display:flex;gap:4px;align-items:center;margin-bottom:3px;">
+        <div class="${rowClass}" style="display:flex;gap:4px;align-items:center;margin-bottom:3px;">
             <select class="sched-day__select" style="flex:1;font-size:0.75rem;padding:3px 6px;">
                 <option value="">— шаблон —</option>
                 ${opts}
@@ -1338,6 +1525,11 @@ export function renderScheduleGrid() {
         const isoDate   = fmtIso(date);
         const generated = events.filter(e => !e.is_template && e.date === isoDate);
 
+        // Set id шаблонов которые уже сгенерированы на эту дату
+        const generatedTplIds = new Set(
+            generated.map(e => e.source_template_id).filter(Boolean)
+        );
+
         const generatedHtml = generated.length > 0
             ? `<div class="sched-generated-list">${generated.map(e => `
                 <div class="sched-gen-item">
@@ -1351,14 +1543,26 @@ export function renderScheduleGrid() {
             : '';
 
         const assigned = schedule[dayKey] ?? [];
-        const rows = assigned.length > 0
-            ? assigned.map((id, i) => buildTemplateRow(dayKey, id, i, assigned.length > 1)).join('')
-            : buildTemplateRow(dayKey, '', 0, false);
+        // Уже выбранные в других строках этого дня — чтобы запретить выбор
+        // того же шаблона дважды.
+        const buildRows = (items) => {
+            if (!items.length) {
+                return buildTemplateRow(dayKey, '', 0, false, generatedTplIds, new Set());
+            }
+            return items.map((id, i) => {
+                const otherIds = new Set(items.filter((_, j) => j !== i));
+                return buildTemplateRow(dayKey, id, i, items.length > 1,
+                                        generatedTplIds, otherIds);
+            }).join('');
+        };
+        const rows = buildRows(assigned);
 
         const addBtn = `<button class="sched-add-tpl btn btn-outlined btn-xs" data-day-key="${dayKey}" style="margin-top:4px;width:100%;font-size:0.7rem;">+ шаблон</button>`;
 
         return `
-            <div class="sched-day${isToday?' sched-day--today':''}${past?' sched-day--past':''}${weekend?' sched-day--weekend':''}">
+            <div class="sched-day${isToday?' sched-day--today':''}${past?' sched-day--past':''}${weekend?' sched-day--weekend':''}"
+                 data-day-key="${dayKey}"
+                 data-gen-tpl-ids="${[...generatedTplIds].join(',')}">
                 <div class="sched-day__head">
                     <span class="sched-day__short">${dayInfo.short}</span>
                     <span class="sched-day__date">${fmtDate(date)}</span>
@@ -1372,6 +1576,47 @@ export function renderScheduleGrid() {
     }).join('');
 
     _bindSchedGridEvents(grid);
+
+    // Вешаем change-handler на select'ы — чтобы при выборе того же шаблона
+    // дважды в одном дне подсветить ошибку сразу (не дожидаясь нажатия
+    // «Сгенерировать»).
+    document.getElementById('sched-grid')?.querySelectorAll('.sched-day__select')
+        .forEach(sel => sel.addEventListener('change', _validateScheduleDay));
+}
+
+// Проверка на дубли шаблонов внутри одного дня — поместили выбор-дубль
+// → красная рамка + tooltip. При генерации бэкенд всё равно отсекёт,
+// но лучше показать пользователю проблему заранее.
+function _validateScheduleDay(e) {
+    const select = e.currentTarget;
+    const list   = select.closest('.sched-tpl-list');
+    if (!list) return;
+
+    const selects = Array.from(list.querySelectorAll('.sched-day__select'));
+    const values  = selects.map(s => s.value).filter(Boolean);
+    const dupSet  = new Set();
+    const seen    = new Set();
+    for (const v of values) {
+        if (seen.has(v)) dupSet.add(v);
+        seen.add(v);
+    }
+
+    selects.forEach(s => {
+        const isDup = s.value && dupSet.has(s.value);
+        s.classList.toggle('sched-day__select--dup', isDup);
+        s.title = isDup ? 'Этот шаблон уже выбран в этом дне' : '';
+    });
+
+    // Также помечаем select если выбрали шаблон уже сгенерированный
+    const day = list.closest('.sched-day');
+    const genIds = (day?.dataset.genTplIds || '').split(',').filter(Boolean);
+    selects.forEach(s => {
+        const isAlready = s.value && genIds.includes(s.value);
+        s.classList.toggle('sched-day__select--already', isAlready);
+        if (isAlready && !s.title) {
+            s.title = 'Этот шаблон уже сгенерирован на эту дату — будет пропущен';
+        }
+    });
 }
 
 function _bindSchedGridEvents(grid) {
@@ -1470,27 +1715,38 @@ export function initSchedule() {
         const totalLists = Object.values(jobs).reduce((sum, arr) => sum + arr.length, 0);
         if (!confirm(`Создать ${totalLists} ${totalLists===1?'список':totalLists<5?'списка':'списков'}?\n\n${previewLines}`)) return;
 
-        let successCount = 0, skipCount = 0;
+        let successCount = 0;
+        const skippedByTpl = [];
         for (const [tplId, tplDates] of Object.entries(jobs)) {
             try {
-                await api.post(`/admin/events/${tplId}/instantiate`, { dates: tplDates });
-                successCount += tplDates.length;
+                // Backend теперь возвращает { created_ids, skipped_dates, message }
+                // и сам пропускает дубли. Мы показываем итоговую сводку.
+                const res = await api.post(`/admin/events/${tplId}/instantiate`,
+                                           { dates: tplDates });
+                successCount += (res.created_ids || []).length;
+                if (res.skipped_dates && res.skipped_dates.length) {
+                    const name = document.querySelector(`#template-select-id option[value="${tplId}"]`)?.text ?? `#${tplId}`;
+                    skippedByTpl.push({ name, dates: res.skipped_dates });
+                }
             } catch (e) {
                 console.error(`instantiate template ${tplId}:`, e);
-                if (e.status === 400) {
-                    const name = document.querySelector(`#template-select-id option[value="${tplId}"]`)?.text ?? `#${tplId}`;
-                    window.showSnackbar?.(`«${name}»: ${e.message ?? 'уже создан на одну из выбранных дат'}`, 'error');
-                    skipCount++;
-                } else {
-                    window.showSnackbar?.(`Ошибка для шаблона #${tplId}: ${e.message ?? 'неизвестная ошибка'}`, 'error');
-                }
+                const name = document.querySelector(`#template-select-id option[value="${tplId}"]`)?.text ?? `#${tplId}`;
+                window.showSnackbar?.(`«${name}»: ${e.message ?? 'ошибка'}`, 'error');
             }
         }
 
-        if (successCount > 0)
-            window.showSnackbar?.(`Создано ${successCount} ${successCount===1?'список':successCount<5?'списка':'списков'}`, 'success');
-        else if (skipCount > 0 && successCount === 0)
-            window.showSnackbar?.('Все выбранные списки уже созданы на эти даты', 'error');
+        if (successCount > 0) {
+            const w = successCount === 1 ? 'список' : successCount < 5 ? 'списка' : 'списков';
+            let msg = `Создано ${successCount} ${w}`;
+            if (skippedByTpl.length) {
+                const skipTotal = skippedByTpl.reduce((s, x) => s + x.dates.length, 0);
+                msg += `. Пропущено дублей: ${skipTotal}`;
+            }
+            window.showSnackbar?.(msg, 'success');
+        } else if (skippedByTpl.length) {
+            const names = skippedByTpl.map(x => `«${x.name}» (${x.dates.length})`).join(', ');
+            window.showSnackbar?.(`Ничего не создано — всё уже сгенерировано: ${names}`, 'error');
+        }
 
         await loadEventsDropdowns();
         renderScheduleGrid();

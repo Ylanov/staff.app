@@ -11,6 +11,7 @@
     <link rel="stylesheet" href="/static/history-calendar.css">
     <link rel="stylesheet" href="/static/event-editor.css">
     <link rel="stylesheet" href="/static/duty-grid.css">
+    <link rel="stylesheet" href="/static/schedule-polish.css">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@300;400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
@@ -742,6 +743,21 @@
 
                     <!-- Контейнер редактора (скрыт до загрузки) -->
                     <div id="editor-container" class="hidden">
+
+                        <!-- Bulk-панель массовых действий (появляется при выделении строк) -->
+                        <div id="editor-bulk-bar" class="editor-bulk-bar hidden">
+                            <span class="editor-bulk-bar__count" id="editor-bulk-count">0</span>
+                            <span>строк выделено</span>
+                            <div class="editor-bulk-bar__actions">
+                                <button id="editor-bulk-reassign" class="btn btn-filled  btn-sm" type="button">
+                                    🔀 Переназначить / Очистить
+                                </button>
+                                <button id="editor-bulk-clear" class="btn btn-outlined btn-sm" type="button">
+                                    Снять выделение
+                                </button>
+                            </div>
+                        </div>
+
                         <div class="editor-header" style="display:flex; align-items:center;
                              justify-content:space-between; flex-wrap:wrap; gap:10px;
                              padding:14px 18px; border-bottom:1px solid var(--md-outline-variant);">

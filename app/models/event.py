@@ -41,6 +41,19 @@ class Event(Base):
     status         = Column(String, default="draft", index=True)   # ← index для фильтра по статусу
     is_template    = Column(Boolean, default=False, nullable=False, index=True)  # ← index
     columns_config = Column(Text, nullable=True)
+    # Ссылка на шаблон-источник из которого сгенерирован этот список.
+    # NULL для шаблонов и «ручных» списков. Используется:
+    #   1) endpoint instantiate_template — защита от дублей (один шаблон
+    #      не может быть развёрнут на одну дату дважды);
+    #   2) UI расписания — индикатор «уже сгенерирован» для дня недели.
+    # ON DELETE SET NULL: при удалении шаблона сгенерированные списки
+    # сохраняются, просто теряют связь с ним.
+    source_template_id = Column(
+        Integer,
+        ForeignKey("events.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
 
     groups = relationship("Group", back_populates="event", cascade="all, delete-orphan")
 

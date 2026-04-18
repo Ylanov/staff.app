@@ -99,6 +99,26 @@ class SlotQuickCreate(BaseModel):
     position_id: Optional[int] = None
 
 
+class SlotsBulkPatch(BaseModel):
+    """
+    Массовое переназначение строк в списке/шаблоне.
+
+    Сценарий «экстренная замена людей»: в шаблоне на слотах 12, 14, 17
+    стоит квота upr_3 с уже заполненными ФИО. Админ хочет «передать»
+    эти строки управлению upr_5, чтобы именно они начали заполнять.
+    Ставит чекбоксы → выбирает действия:
+        department = "upr_5"   — сменить квоту
+        clear_name = True      — очистить ФИО, звание, № документа
+        clear_note / callsign  — очистить позывной/примечание
+    """
+    slot_ids:       List[int]       = Field(..., min_length=1, max_length=500)
+    department:     Optional[str]   = Field(default=None, max_length=100)
+    position_id:    Optional[int]   = None
+    clear_name:     bool = False
+    clear_callsign: bool = False
+    clear_note:     bool = False
+
+
 from app.models.user import AVAILABLE_PERMISSIONS, DEFAULT_PERMISSIONS
 
 
@@ -321,11 +341,14 @@ def get_all_events_admin(
     events = db.query(Event).order_by(Event.date.asc().nullslast(), Event.id.desc()).all()
     return [
         {
-            "id":          e.id,
-            "title":       e.title,
-            "date":        e.date.isoformat() if e.date else None,
-            "status":      e.status,
-            "is_template": e.is_template,
+            "id":                 e.id,
+            "title":              e.title,
+            "date":               e.date.isoformat() if e.date else None,
+            "status":             e.status,
+            "is_template":        e.is_template,
+            # Нужен фронту чтобы в расписании подсветить «уже сгенерирован»
+            # и отключить повторный выбор того же шаблона на эту дату.
+            "source_template_id": e.source_template_id,
         }
         for e in events
     ]
@@ -440,10 +463,26 @@ async def instantiate_template(
         .all()
     )
 
-    created_ids = []
+    # ── Дедупликация: какие даты УЖЕ сгенерированы из этого шаблона ──────────
+    # Забираем одной выборкой, чтобы не делать SELECT в цикле.
+    already_gen_dates = {
+        d for (d,) in db.query(Event.date)
+                        .filter(
+                            Event.source_template_id == template.id,
+                            Event.date.in_(payload.dates),
+                        )
+                        .all()
+    }
+
+    created_ids: list[int] = []
+    skipped_dates: list[str] = []
     WEEKDAYS = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"]
 
     for target_date in payload.dates:
+        if target_date in already_gen_dates:
+            skipped_dates.append(target_date.isoformat())
+            continue
+
         weekday_str = WEEKDAYS[target_date.weekday()]
 
         # Ищем кто в наряде на эту дату — заполняем слоты сразу при создании
@@ -454,6 +493,7 @@ async def instantiate_template(
             date=target_date,
             status="active",
             is_template=False,
+            source_template_id=template.id,    # ← связь с шаблоном для защиты от дублей
             columns_config=template.columns_config,
         )
         db.add(new_event)
@@ -488,7 +528,22 @@ async def instantiate_template(
 
     db.commit()
     await manager.broadcast({"action": "update"})
-    return {"message": "Успешно сгенерировано", "created_ids": created_ids}
+
+    # Статус 200: даже если всё пропущено — это НЕ ошибка, просто
+    # админу стоит сообщить что дубли отброшены.
+    if skipped_dates and not created_ids:
+        msg = f"Все даты уже сгенерированы из этого шаблона ({len(skipped_dates)})."
+    elif skipped_dates:
+        msg = (f"Создано: {len(created_ids)}. "
+               f"Пропущено (уже есть): {len(skipped_dates)}.")
+    else:
+        msg = f"Создано: {len(created_ids)}."
+
+    return {
+        "message":       msg,
+        "created_ids":   created_ids,
+        "skipped_dates": skipped_dates,
+    }
 
 
 # ─── Группы ──────────────────────────────────────────────────────────────────
@@ -663,6 +718,120 @@ async def delete_slot(
     db.commit()
     await manager.broadcast({"event_id": event_id, "action": "update"})
     return {"message": "Строка удалена"}
+
+
+@router.post("/slots/bulk-patch", summary="Массовое изменение слотов (переназначение квоты, очистка ФИО)")
+async def bulk_patch_slots(
+        payload:       SlotsBulkPatch,
+        request:       Request,
+        db:            Session = Depends(get_db),
+        current_admin: User    = Depends(get_current_active_admin),
+):
+    """
+    «Экстренная замена» — переназначить несколько строк сразу, не трогая
+    другие.
+
+    Приёмы:
+      • Сменить квоту: передать `department="upr_5"` — все выбранные
+        строки уйдут управлению upr_5. Управление, бывшее раньше,
+        получит уведомление «ваш слот был изменён».
+      • Очистить ФИО: `clear_name=true` — обнуляет full_name, rank,
+        doc_number. Другое управление начнёт заполнять с чистого листа.
+      • Очистить позывной / примечание — аналогично.
+      • Сменить должность — через position_id.
+
+    Версия каждого слота инкрементируется, каждое изменение попадает
+    в audit_log (отдельная запись на слот). WS-broadcast по каждому
+    затронутому event_id — клиенты перечитывают таблицы.
+    """
+    slots = (
+        db.query(Slot)
+        .options(joinedload(Slot.group).joinedload(Group.event))
+        .filter(Slot.id.in_(payload.slot_ids))
+        .all()
+    )
+    if not slots:
+        raise HTTPException(status_code=404, detail="Слоты не найдены")
+
+    # Группируем по event_id для broadcast и уведомлений
+    touched_events: set[int] = set()
+    notified_users: dict[int, int] = {}   # user_id → count
+
+    for slot in slots:
+        before = snapshot(slot, _SLOT_AUDIT_FIELDS)
+        old_dept = slot.department
+
+        if payload.department is not None:
+            slot.department = payload.department
+        if payload.position_id is not None:
+            slot.position_id = payload.position_id
+        if payload.clear_name:
+            slot.full_name  = None
+            slot.rank       = None
+            slot.doc_number = None
+        if payload.clear_callsign:
+            slot.callsign = None
+        if payload.clear_note:
+            slot.note = None
+
+        slot.version += 1
+
+        after = snapshot(slot, _SLOT_AUDIT_FIELDS)
+        diff  = compute_diff(before, after)
+        if not diff:
+            continue
+
+        ev = slot.group.event
+        touched_events.add(ev.id if ev else None)
+
+        audit_entry = log_change(
+            db, request, current_admin,
+            action      = ACTION_UPDATE,
+            entity_type = "slot",
+            entity_id   = slot.id,
+            old_values  = diff["old"],
+            new_values  = diff["new"],
+            extra       = {
+                "event_id":    ev.id if ev else None,
+                "event_title": ev.title if ev else None,
+                "bulk":        True,
+            },
+        )
+
+        # Нотификации старому и новому department'у
+        for uname in filter(None, {old_dept, slot.department}):
+            if uname == current_admin.username:
+                continue
+            target = db.query(User).filter(User.username == uname).first()
+            if target:
+                notify_user(
+                    db, target.id,
+                    kind  = "slot_changed",
+                    title = ("Слот передан вам администратором"
+                             if uname == slot.department and uname != old_dept
+                             else "Ваш слот был изменён администратором"),
+                    body  = (f"Список «{ev.title}» — группа «{slot.group.name}». "
+                             "Зайдите в «Списки» чтобы увидеть изменения.")
+                             if ev else "Данные слота изменены.",
+                    link  = f"/static/index.html#event/{ev.id}" if ev else None,
+                    audit = audit_entry,
+                )
+                notified_users[target.id] = notified_users.get(target.id, 0) + 1
+
+    db.commit()
+
+    # Realtime: по одному broadcast на event + per-user push
+    for eid in touched_events:
+        if eid is not None:
+            await manager.broadcast({"event_id": eid, "action": "update"})
+    for uid in notified_users:
+        await manager.push_to_user(uid, {"action": "notification_new", "kind": "slot_changed"})
+
+    return {
+        "updated":      len(slots),
+        "events":       list(filter(None, touched_events)),
+        "notified":     list(notified_users.keys()),
+    }
 
 
 @router.put("/slots/{slot_id}", response_model=SlotAdminResponse)
