@@ -191,3 +191,42 @@ def notify_user(
     )
     db.add(n)
     return n
+
+
+def notify_all_admins(
+    db:        Session,
+    *,
+    kind:      str,
+    title:     str,
+    body:      Optional[str] = None,
+    link:      Optional[str] = None,
+    audit:     Optional[AuditLog] = None,
+    exclude_user_id: Optional[int] = None,
+) -> list[int]:
+    """
+    Создать уведомление каждому активному админу (кроме exclude_user_id —
+    чтобы админ-инициатор действия не получал уведомление о самом себе).
+
+    Возвращает список user_id всех получателей — используется вызывающим
+    кодом для push_to_user() после commit.
+
+    Типичный use-case: department-юзер что-то сделал (заполнил слот,
+    поставил наряд, добавил человека в общую базу) — всем админам
+    приходит уведомление в реальном времени.
+    """
+    from app.models.user import User
+    admins = (
+        db.query(User)
+        .filter(User.role == "admin", User.is_active == True)
+        .all()
+    )
+    recipient_ids: list[int] = []
+    for a in admins:
+        if exclude_user_id is not None and a.id == exclude_user_id:
+            continue
+        notify_user(
+            db, a.id,
+            kind=kind, title=title, body=body, link=link, audit=audit,
+        )
+        recipient_ids.append(a.id)
+    return recipient_ids

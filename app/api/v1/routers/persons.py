@@ -42,6 +42,8 @@ from app.db.database import get_db
 from app.models.person import Person
 from app.models.user import User
 from app.api.dependencies import get_current_user, get_current_active_admin, require_permission
+from app.core.audit import notify_all_admins
+from app.core.websockets import manager
 
 router = APIRouter()
 
@@ -685,7 +687,7 @@ def get_all_persons(
 
 @router.post("", response_model=PersonResponse, status_code=status.HTTP_201_CREATED,
              summary="Добавить человека")
-def create_person(
+async def create_person(
         person_in: PersonCreate,
         db:        Session = Depends(get_db),
         current_user: User = Depends(require_permission("persons")),
@@ -709,12 +711,33 @@ def create_person(
     )
     db.add(person)
     try:
-        db.commit()
+        db.flush()
     except IntegrityError:
         db.rollback()
         raise HTTPException(status_code=status.HTTP_409_CONFLICT,
                             detail="Человек с таким ФИО уже есть в базе")
+
+    # Уведомляем админов — department добавил нового человека в общую базу.
+    # Админ видит это событие сразу в колокольчике, без нужды искать вручную.
+    admin_recipients: list[int] = []
+    if current_user.role != "admin":
+        admin_recipients = notify_all_admins(
+            db,
+            kind  = "person_applied",
+            title = f"«{current_user.username}» добавил(а) человека в базу",
+            body  = (f"ФИО: {person.full_name}"
+                     + (f" · {person.rank}" if person.rank else "")),
+            link  = None,
+            exclude_user_id = current_user.id,
+        )
+
+    db.commit()
     db.refresh(person)
+
+    for uid in admin_recipients:
+        await manager.push_to_user(uid, {
+            "action": "notification_new", "kind": "person_applied",
+        })
     return person
 
 

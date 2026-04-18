@@ -30,6 +30,7 @@ from app.models.person import Person
 from app.models.duty import DutySchedule, DutySchedulePerson, DutyMark
 from app.api.dependencies import get_current_user, require_permission
 from app.core.websockets import manager
+from app.core.audit import notify_all_admins
 
 # Весь роутер графиков наряда управлений требует permission "duty".
 # Admin пропускается автоматически (см. require_permission).
@@ -381,11 +382,35 @@ async def toggle_my_mark(
                     fill_count += 1
                     affected_event_ids.add(event.id)
 
+    # Уведомляем админов о действии департамента в графике наряда.
+    # type: 'duty_assigned' когда поставили, 'slot_changed' для снятия
+    # (снятие попадает в другую ветку выше; здесь только постановка).
+    admin_recipients: list[int] = []
+    if user.role != "admin":
+        kind_title = {
+            "N": "в наряд",
+            "U": "в увольнение",
+            "V": "в отпуск",
+        }.get(mark_type, "в график")
+        admin_recipients = notify_all_admins(
+            db,
+            kind  = "duty_assigned",
+            title = f"«{user.username}» поставил(а) {person.full_name} {kind_title}",
+            body  = f"Дата: {payload.duty_date.isoformat()}",
+            link  = None,
+            exclude_user_id = user.id,
+        )
+
     db.commit()
 
     # Уведомить всех подключённых о изменении (как у админа)
     for eid in affected_event_ids:
         await manager.broadcast({"event_id": eid, "action": "update"})
+
+    for uid in admin_recipients:
+        await manager.push_to_user(uid, {
+            "action": "notification_new", "kind": "duty_assigned",
+        })
 
     return {
         "action":            "marked",

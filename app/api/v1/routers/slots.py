@@ -15,7 +15,7 @@ from app.schemas.slot import SlotUpdate, SlotResponse
 from app.api.dependencies import get_current_user
 from app.core.websockets import manager
 from app.core.audit import (
-    log_change, snapshot, compute_diff, notify_user,
+    log_change, snapshot, compute_diff, notify_user, notify_all_admins,
     ACTION_UPDATE,
 )
 from app.api.v1.routers.persons import upsert_person_from_slot
@@ -154,8 +154,9 @@ async def fill_slot(
     # изменений) — не засоряем лог.
     after = snapshot(slot, SLOT_AUDIT_FIELDS)
     diff = compute_diff(before, after)
+    admin_recipients: list[int] = []
     if diff:
-        log_change(
+        audit_entry = log_change(
             db, request, current_user,
             action      = ACTION_UPDATE,
             entity_type = "slot",
@@ -163,6 +164,25 @@ async def fill_slot(
             old_values  = diff["old"],
             new_values  = diff["new"],
             extra       = {"event_id": slot.group.event_id},
+        )
+
+        # Уведомляем админов что department что-то заполнил / изменил
+        # в своём слоте. Раньше админ не получал уведомлений вообще —
+        # его лента всегда была пустой. Теперь ключевые действия
+        # департаментов ему видны в реальном времени.
+        # exclude=current_user.id покрывает случай когда админ сам
+        # использует «режим заполнения» и редактирует как department.
+        ev_title = (slot.group.event.title
+                    if slot.group and slot.group.event else None)
+        admin_recipients = notify_all_admins(
+            db,
+            kind  = "slot_filled",
+            title = f"«{current_user.username}» заполнил(а) слот",
+            body  = (f"Список «{ev_title}» — группа «{slot.group.name}». "
+                     f"ФИО: {slot.full_name or '—'}"),
+            link  = f"/static/index.html#event/{slot.group.event_id}",
+            audit = audit_entry,
+            exclude_user_id = current_user.id,
         )
 
     if slot.full_name and slot.full_name.strip():
@@ -181,6 +201,12 @@ async def fill_slot(
     db.refresh(slot)
 
     await manager.broadcast({"event_id": slot.group.event_id, "action": "update"})
+
+    # Realtime push каждому админу — пусть колокольчик сразу засветится
+    for uid in admin_recipients:
+        await manager.push_to_user(uid, {
+            "action": "notification_new", "kind": "slot_filled",
+        })
 
     return slot
 
@@ -267,8 +293,9 @@ async def apply_person_to_slot(
     # Audit: фиксируем диф с указанием что применение было из общей базы
     after = snapshot(slot, SLOT_AUDIT_FIELDS)
     diff  = compute_diff(before, after)
+    admin_recipients: list[int] = []
     if diff:
-        log_change(
+        audit_entry = log_change(
             db, request, current_user,
             action      = ACTION_UPDATE,
             entity_type = "slot",
@@ -281,8 +308,24 @@ async def apply_person_to_slot(
                 "person_id":     person.id,
             },
         )
+        ev_title = (slot.group.event.title
+                    if slot.group and slot.group.event else None)
+        admin_recipients = notify_all_admins(
+            db,
+            kind  = "slot_filled",
+            title = f"«{current_user.username}» применил(а) человека из общей базы",
+            body  = (f"Список «{ev_title}» — группа «{slot.group.name}». "
+                     f"ФИО: {slot.full_name}"),
+            link  = f"/static/index.html#event/{slot.group.event_id}",
+            audit = audit_entry,
+            exclude_user_id = current_user.id,
+        )
 
     db.commit()
     db.refresh(slot)
     await manager.broadcast({"event_id": slot.group.event_id, "action": "update"})
+    for uid in admin_recipients:
+        await manager.push_to_user(uid, {
+            "action": "notification_new", "kind": "slot_filled",
+        })
     return slot
