@@ -103,8 +103,12 @@ body {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    max-width: 1440px;
-    margin: 0 auto;
+    /* Full-width: раньше было max-width: 1440px и margin: 0 auto —
+       на широких мониторах шапка сжималась в центр, и большая часть
+       экрана пустовала. Теперь растягивается на всю ширину, отступ
+       только через padding. */
+    max-width: none;
+    width: 100%;
     padding: 0 24px;
     height: 60px;
     gap: 16px;
@@ -450,9 +454,16 @@ td input:focus, td select:focus {
 
 /* ─── Page Layout ─────────────────────────────────────────── */
 .page {
-    max-width: 1440px;
+    /* Full-width: раньше max-width: 1440px отжимал контент в центр
+       с пустотой по бокам на широких экранах. Теперь растягивается
+       на всю ширину вьюпорта, отступы через padding.
+       Для очень широких мониторов (>2560px) ставим мягкий потолок
+       чтобы строки не разрастались до нечитабельных — 2400px хватает. */
+    max-width: 2400px;
     margin: 0 auto;
-    padding: 22px 22px 48px;
+    padding: 22px 28px 48px;
+    width: 100%;
+    box-sizing: border-box;
 }
 
 .page-header {
