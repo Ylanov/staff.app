@@ -17,11 +17,11 @@
   department   — audit по своим слотам (через entity_type='slot' + slot.department
                  == username) + notifications себе.
 """
-from datetime import datetime, timezone
+from datetime import date as date_type, datetime, timedelta, timezone
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
-from sqlalchemy import desc
+from sqlalchemy import desc, func
 from sqlalchemy.orm import Session, joinedload
 from pydantic import BaseModel, ConfigDict
 
@@ -97,6 +97,8 @@ def get_audit_log(
         entity_id:   Optional[int] = Query(None),
         user_id:     Optional[int] = Query(None),
         action:      Optional[str] = Query(None),
+        date_from:   Optional[date_type] = Query(None, description="Фильтр с даты (включительно)"),
+        date_to:     Optional[date_type] = Query(None, description="Фильтр по дату (включительно)"),
         page:  int = Query(1,  ge=1),
         limit: int = Query(50, ge=1, le=200),
         db:    Session = Depends(get_db),
@@ -107,6 +109,11 @@ def get_audit_log(
     if entity_id:   q = q.filter(AuditLog.entity_id   == entity_id)
     if user_id:     q = q.filter(AuditLog.user_id     == user_id)
     if action:      q = q.filter(AuditLog.action      == action)
+    if date_from:   q = q.filter(AuditLog.timestamp >= date_from)
+    if date_to:
+        # timestamp <= end of day (exclusive next day). Работает для любой TZ
+        # потому что timestamp хранится с TZ.
+        q = q.filter(AuditLog.timestamp < (date_to + timedelta(days=1)))
 
     total = q.count()
     pages = max(1, (total + limit - 1) // limit)
@@ -119,6 +126,53 @@ def get_audit_log(
         items=[_ae(e) for e in items],
         total=total, page=page, pages=pages, limit=limit,
     )
+
+
+@audit_router.get(
+    "/audit-log/day-counts",
+    summary="Счётчики audit-записей по дням в диапазоне (для календарного вида)",
+)
+def get_audit_day_counts(
+        date_from: date_type = Query(..., description="Начало диапазона (включит.)"),
+        date_to:   date_type = Query(..., description="Конец диапазона (включит.)"),
+        db:        Session   = Depends(get_db),
+        _:         User      = Depends(get_current_active_admin),
+):
+    """
+    Возвращает {"2026-04-15": 23, "2026-04-16": 7, ...}
+    — сколько audit-записей в каждый день диапазона.
+
+    Используется календарной вкладкой истории: под каждой клеткой
+    показываем сколько было изменений — при клике на день грузится
+    подробный лог за этот день одним запросом.
+
+    Диапазон ограничен 90 днями — защита от тяжёлых запросов.
+    """
+    if date_to < date_from:
+        raise HTTPException(status_code=400, detail="date_to < date_from")
+    span_days = (date_to - date_from).days
+    if span_days > 90:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Диапазон слишком большой ({span_days} дней). Максимум 90.",
+        )
+
+    # GROUP BY DATE(timestamp) — PostgreSQL cast к дате с учётом сессионной TZ.
+    # Для простоты передаём сервер-локальное время; при необходимости
+    # в будущем можно добавить tz-параметр.
+    rows = (
+        db.query(
+            func.date(AuditLog.timestamp).label("day"),
+            func.count(AuditLog.id).label("cnt"),
+        )
+        .filter(
+            AuditLog.timestamp >= date_from,
+            AuditLog.timestamp <  date_to + timedelta(days=1),
+        )
+        .group_by(func.date(AuditLog.timestamp))
+        .all()
+    )
+    return {r.day.isoformat(): int(r.cnt) for r in rows}
 
 
 def _ae(e: AuditLog) -> AuditLogEntry:
