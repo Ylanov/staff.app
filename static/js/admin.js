@@ -249,7 +249,19 @@ async function renderAdminEditor(eventId, isSilentUpdate = false) {
                     <td style="text-align:center; color:var(--md-on-surface-hint); font-size:0.78rem;">${globalIndex++}</td>
                     ${visibleCols.map(col => buildCell(col, slot)).join('')}
                     <td style="text-align:center;">
-                        <button class="btn-tiny-danger" data-delete-id="${slot.id}" title="Удалить строку">✕</button>
+                        <div style="display:flex; gap:4px; justify-content:center;">
+                            <button class="users-v2__icon-btn" title="История изменений"
+                                    onclick="window.openSlotHistory(${slot.id}, { canRevert: true })"
+                                    type="button" style="width:26px; height:26px;">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                     stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+                                     style="width:12px; height:12px;">
+                                    <circle cx="12" cy="12" r="10"/>
+                                    <polyline points="12 6 12 12 16 14"/>
+                                </svg>
+                            </button>
+                            <button class="btn-tiny-danger" data-delete-id="${slot.id}" title="Удалить строку">✕</button>
+                        </div>
                     </td>
                 </tr>`).join('');
 

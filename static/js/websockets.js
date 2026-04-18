@@ -26,6 +26,17 @@ function connect() {
         reconnectAttempts = 0;
         lastPongTimestamp = Date.now();
         startHeartbeat();
+
+        // Идентифицируемся для получения персональных уведомлений
+        // через канал push_to_user. currentUser устанавливается в auth.js.
+        if (window.currentUser?.id) {
+            try {
+                ws.send(JSON.stringify({
+                    type: 'identify',
+                    user_id: window.currentUser.id,
+                }));
+            } catch (_) { /* noop */ }
+        }
     };
 
     ws.onmessage = function (event) {
@@ -52,6 +63,13 @@ function connect() {
                 document.dispatchEvent(
                     new CustomEvent('datachanged', { detail: data })
                 );
+            }
+
+            // Персональное уведомление — тригерим перезагрузку ленты.
+            // Сервер шлёт только флаг, сама запись уже в БД.
+            if (data.action === 'notification_new') {
+                console.log('🔔 WS message [notification_new]:', data);
+                window._refreshNotifications?.();
             }
 
         } catch (error) {

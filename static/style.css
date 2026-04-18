@@ -2673,14 +2673,28 @@ tr:hover .duty-grid__remove-person {
 
 .db-layout {
     display: grid;
-    grid-template-columns: 236px 1fr;
+    /* 3 колонки: календарь слева · контент в центре · уведомления справа.
+       Центр гибкий (1fr), боковые фиксированные. */
+    grid-template-columns: 236px minmax(0, 1fr) 320px;
     gap: 20px;
     align-items: start;
     padding-top: 4px;
 }
 
+@media (max-width: 1280px) {
+    /* На средних экранах уведомления уходят под контент */
+    .db-layout { grid-template-columns: 236px minmax(0, 1fr); }
+    .db-notif-col { grid-column: 1 / -1; }
+}
+
 @media (max-width: 760px) {
     .db-layout { grid-template-columns: 1fr; }
+    .db-notif-col { grid-column: auto; }
+}
+
+.db-notif-col {
+    position: sticky;
+    top: 20px;
 }
 
 /* ── Sidebar (sticky) ────────────────────────────────────────────────────── */

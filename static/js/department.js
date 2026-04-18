@@ -131,9 +131,20 @@ function renderGroupTable(groupName) {
             <td><input id="doc-${slot.id}"  value="${esc(slot.doc_number)}" placeholder="Номер документа"></td>
             <td>${esc(slot.callsign || '-')}</td>
             <td>
-                <button class="btn btn-success btn-sm" data-slot-id="${slot.id}">
-                    Сохранить
-                </button>
+                <div style="display:flex; gap:6px; align-items:center;">
+                    <button class="btn btn-success btn-sm" data-slot-id="${slot.id}">
+                        Сохранить
+                    </button>
+                    <button class="users-v2__icon-btn" title="История изменений"
+                            onclick="window.openSlotHistory(${slot.id}, { canRevert: true })"
+                            type="button">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                             stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <circle cx="12" cy="12" r="10"/>
+                            <polyline points="12 6 12 12 16 14"/>
+                        </svg>
+                    </button>
+                </div>
             </td>
         </tr>
     `).join('');
@@ -337,6 +348,12 @@ export function listenForUpdates() {
         if (currentEventId && currentEventId == detail.eventId) {
             renderMySlots(currentEventId, true);
         }
+    });
+
+    // После отката в модалке истории — перечитываем таблицу слотов,
+    // чтобы версия и значения синхронизировались.
+    document.addEventListener('slot-reverted', () => {
+        if (currentEventId) renderMySlots(currentEventId, true);
     });
 
     // Кнопка "К спискам"

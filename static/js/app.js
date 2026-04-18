@@ -8,6 +8,12 @@ import * as duty       from './duty.js';
 import * as combatCalc from './combat_calc.js';
 import * as deptDuty   from './dept_duty.js';
 import * as dashboard  from './dashboard.js';
+// Подключаем статически — модуль регистрирует window.openSlotHistory
+// при импорте, чтобы inline-кнопка в таблице слотов его видела.
+import './slot_history.js';
+// Центр уведомлений — инициализируется через notifications.initNotifications()
+// вызываемый в auth.js после логина (чтобы /notifications не дёргался до JWT).
+import * as notifications from './notifications.js';
 
 window.app = {
     deleteUser:      admin.deleteUser,

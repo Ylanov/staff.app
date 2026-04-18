@@ -85,6 +85,14 @@ async function _doInitSession() {
     setUserDisplay(user.username);
     initWebSocket();
 
+    // Центр уведомлений — загрузить ленту и запустить periodic-poll
+    // (WS-push всё равно срабатывает первым, poll — fallback).
+    import('./notifications.js').then(m => m.initNotifications()).catch(() => {});
+
+    // Показываем колокольчик в header сразу после успешного логина.
+    // Изначально hidden чтобы не светиться на экране логина.
+    document.getElementById('notif-header-btn')?.classList.remove('hidden');
+
     // Скрываем недоступные вкладки управления по user.permissions.
     // Вызываем немедленно (до showView), чтобы пользователь не увидел вспышку
     // запрещённых кнопок перед их скрытием. Для admin permissions = все вкладки.
@@ -170,6 +178,11 @@ export function logout() {
     localStorage.removeItem('token');
     closeWebSocket();
     window.currentUserRole = null;
+    window.currentUser     = null;
+
+    // Скрываем колокольчик и dropdown уведомлений
+    document.getElementById('notif-header-btn')?.classList.add('hidden');
+    document.getElementById('notif-header-dropdown')?.classList.add('hidden');
 
     // Останавливаем автообновление дашборда если оно было запущено
     import('./dashboard.js')
