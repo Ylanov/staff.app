@@ -76,7 +76,14 @@ export async function loadDeptPersons(opts = {}) {
         params.set('sort',  _state.sort);
         params.set('order', _state.order);
         if (_state.q) params.set('q', _state.q);
-        if (_state.mode === 'unassigned') params.set('unassigned', 'true');
+        // Режимы взаимоисключающие: бэк принимает один из двух флагов.
+        // Без флага — "свои + общие" (fallback), но во вкладке "Мои люди"
+        // нам нужен СТРОГО только свой management — отсюда mine=true.
+        if (_state.mode === 'unassigned') {
+            params.set('unassigned', 'true');
+        } else if (_state.mode === 'mine') {
+            params.set('mine', 'true');
+        }
 
         const res = await api.get(`/persons?${params.toString()}`);
         _state.items = res.items || [];

@@ -600,28 +600,50 @@ def get_all_persons(
         sort:  str = Query("full_name", regex="^(full_name|rank|doc_number|department|created_at)$"),
         order: str = Query("asc", regex="^(asc|desc)$"),
         unassigned: bool = Query(False),
+        mine:       bool = Query(False),
 ):
     """
     База людей с гибким режимом ответа.
 
-    Видимость:
-      • admin: все записи;
-      • department: свои + "общие" (department IS NULL);
-      • unassigned=true: только общие (IS NULL).
+    Три режима видимости для department-пользователя:
+      • mine=true        → только свои (department == username)      → "Мои люди"
+      • unassigned=true  → только общие (department IS NULL)          → "Личный состав"
+      • оба false        → свои + общие (объединённый режим по умолч.) → автодополнение/поиск
+
+    Для admin:
+      • unassigned=true → только общие
+      • иначе           → все записи
 
     Формат ответа:
-      • Без ?page= — плоский список List[PersonResponse] (старый контракт).
-      • С ?page= — {items, total, page, pages, limit} для dept_persons.js.
+      • Без ?page=   — плоский List[PersonResponse] (старый контракт).
+      • С ?page=N    — {items, total, page, pages, limit} для dept_persons.js.
 
-    Permission: требуется "persons" в user.permissions (admin — всегда ок).
+    Permission: требуется "persons" в user.permissions (admin всегда ок).
+
+    ИСПРАВЛЕНО: раньше dept_persons.js в режиме 'mine' не передавал
+    никакой флаг, и бэк отдавал "свои + общие" — из-за этого во вкладке
+    «Мои люди» показывались и чужие общие записи. Теперь mine=true даёт
+    строгую фильтрацию только по своему управлению.
     """
     from sqlalchemy import or_, desc as sa_desc, asc as sa_asc
+
+    # Взаимоисключающие флаги: если оба true — ошибка логики фронта
+    if mine and unassigned:
+        raise HTTPException(
+            status_code=400,
+            detail="Нельзя одновременно указывать mine=true и unassigned=true",
+        )
 
     query = db.query(Person)
 
     # Видимость по роли
     if current_user.role != "admin":
-        if unassigned:
+        if mine:
+            # Строгий режим: только свои (department в точности == username).
+            # Даже admin здесь видит только то что сам бы создал от своего
+            # имени, но admin до этой ветки не доходит.
+            query = query.filter(Person.department == current_user.username)
+        elif unassigned:
             query = query.filter(Person.department.is_(None))
         else:
             query = query.filter(
@@ -630,8 +652,10 @@ def get_all_persons(
                     Person.department.is_(None),
                 )
             )
-    elif unassigned:
-        query = query.filter(Person.department.is_(None))
+    else:
+        # admin: mine бессмысленно (у него нет своей квоты), unassigned работает
+        if unassigned:
+            query = query.filter(Person.department.is_(None))
 
     if q:
         query = query.filter(Person.full_name.ilike(f"%{q}%"))
