@@ -38,12 +38,13 @@ from typing import Optional, List
 from app.db.database import get_db
 from app.models.user import User
 from app.models.combat_calc import CombatCalcTemplate, CombatCalcInstance, CombatCalcSlot
-from app.api.dependencies import get_current_user, get_current_active_admin
+from app.api.dependencies import get_current_user, get_current_active_admin, require_permission
 from app.core.websockets import manager
 
 # ─── Два отдельных роутера вместо одного ─────────────────────────────────────
 admin_router = APIRouter()   # только для администратора
-dept_router  = APIRouter()   # для управлений (заполнение)
+# dept_router требует permission "combat" — admin пропускается автоматически
+dept_router  = APIRouter(dependencies=[Depends(require_permission("combat"))])
 
 # Оставляем router как алиас для обратной совместимости если где-то импортируется
 router = admin_router

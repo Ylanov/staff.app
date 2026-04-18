@@ -62,3 +62,35 @@ def get_current_active_admin(current_user: User = Depends(get_current_user)) -> 
             detail="Недостаточно прав. Только для Админа.",
         )
     return current_user
+
+
+def require_permission(permission: str):
+    """
+    Фабрика зависимостей для проверки доступа к конкретной вкладке.
+
+    Использование:
+        router = APIRouter(dependencies=[Depends(require_permission("persons"))])
+        или точечно на handler:
+        def handler(user: User = Depends(require_permission("persons"))): ...
+
+    Логика:
+        admin — пропускается всегда (полный доступ);
+        department — permission должно быть в user.permissions;
+        иначе — 403.
+
+    Защищает backend от обхода UI-ограничений: пользователь мог узнать
+    URL из devtools и дёргать API напрямую. Без этой проверки скрытие
+    кнопки в UI — только косметика.
+    """
+    def _check(current_user: User = Depends(get_current_user)) -> User:
+        if current_user.role == "admin":
+            return current_user
+        user_perms = current_user.permissions or []
+        if permission not in user_perms:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"У вас нет доступа к разделу '{permission}'",
+            )
+        return current_user
+
+    return _check

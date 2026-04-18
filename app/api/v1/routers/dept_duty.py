@@ -28,10 +28,12 @@ from app.models.user import User
 from app.models.event import Event, Group, Slot
 from app.models.person import Person
 from app.models.duty import DutySchedule, DutySchedulePerson, DutyMark
-from app.api.dependencies import get_current_user
+from app.api.dependencies import get_current_user, require_permission
 from app.core.websockets import manager
 
-router = APIRouter()
+# Весь роутер графиков наряда управлений требует permission "duty".
+# Admin пропускается автоматически (см. require_permission).
+router = APIRouter(dependencies=[Depends(require_permission("duty"))])
 
 
 # ─── Dependency: только роль department ──────────────────────────────────────

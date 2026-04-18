@@ -15,10 +15,51 @@ window.app = {
     initDashboard:   () => dashboard.initDashboard(),
 };
 
+// ─── Permissions → видимость вкладок управления ──────────────────────────────
+//
+// Вызывается из auth.js после получения /auth/me: скрывает кнопки-вкладок,
+// которых нет в user.permissions. Admin всегда получает полный набор
+// (бэкенд так возвращает), поэтому для него ничего не скрывается.
+//
+// ВАЖНО: это только UI-фильтр. Бэкенд параллельно отклоняет API-вызовы
+// через require_permission, поэтому обход через devtools не сработает —
+// будет 403.
+const PERM_TAB_MAP = {
+    'lists':   'dept-main-tab-btn',
+    'duty':    'dept-duty-tab-btn',
+    'combat':  'cc-dept-tab-btn',
+    'tasks':   'dept-tasks-tab-btn',
+    'persons': 'dept-persons-tab-btn',
+};
+
+export function applyPermissionsToTabs(permissions) {
+    const perms = new Set(Array.isArray(permissions) ? permissions : []);
+    Object.entries(PERM_TAB_MAP).forEach(([perm, btnId]) => {
+        const btn = document.getElementById(btnId);
+        if (!btn) return;
+        btn.style.display = perms.has(perm) ? '' : 'none';
+    });
+
+    // Если текущая активная вкладка скрыта (например админ только что
+    // убрал доступ) — переключаемся на первую доступную. Так пользователь
+    // не застревает на 404/403.
+    const firstAvailable = Object.keys(PERM_TAB_MAP).find(p => perms.has(p));
+    if (firstAvailable) {
+        const firstBtn = document.getElementById(PERM_TAB_MAP[firstAvailable]);
+        const activeHidden = Object.values(PERM_TAB_MAP).some(id => {
+            const b = document.getElementById(id);
+            return b && b.classList.contains('btn-filled') && b.style.display === 'none';
+        });
+        if (activeHidden && firstBtn) firstBtn.click();
+    }
+}
+
+// Делаем доступным без циклического импорта между auth.js и app.js
+window._applyPermissionsToTabs = applyPermissionsToTabs;
+
 // ─── Переключение вкладок управления (Department View) ───────────────────────
 
-let _tasksDeptInited = false;
-
+let _tasksDeptInited   = false;
 let _deptPersonsInited = false;
 
 function switchDeptTab(tab) {
@@ -71,8 +112,8 @@ function switchDeptTab(tab) {
     } else if (tab === 'persons') {
         document.getElementById('dept-persons-panel')?.classList.remove('hidden');
         activateBtn('dept-persons-tab-btn');
-        // Lazy-init: первая активация рисует Shell (тулбар/таблица/форма),
-        // дальше только reload данных.
+        // Первый заход — рисуем разметку через _renderShell + грузим.
+        // Следующие — только reload данных (сохраняется состояние mode/поиска).
         import('./dept_persons.js').then(m => {
             if (!_deptPersonsInited) {
                 m.initDeptPersons();
@@ -187,6 +228,7 @@ function bindEvents() {
     ui.initPersonsTab();
     ui.initAutocomplete();
     admin.initSchedule();
+    admin.initUsersTab();   // чекбоксы permissions в форме «+ Добавить пользователя»
 
     // Графики наряда (Администратор) — только привязка событий
     duty.initDuty();

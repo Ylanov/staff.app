@@ -136,15 +136,6 @@
                         </svg>
                         Календарь
                     </button>
-                    <button id="dept-persons-tab-btn" class="btn btn-outlined btn-sm" type="button">
-                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-                             stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right:4px;">
-                            <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/>
-                            <circle cx="9" cy="7" r="4"/>
-                            <path d="M23 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/>
-                        </svg>
-                        База людей
-                    </button>
                 </div>
             </div>
 
@@ -284,16 +275,6 @@
             <!-- Зона Календаря задач (Для управлений) -->
             <div id="dept-tasks-panel" class="hidden" style="margin-top:24px;">
                 <div id="tasks-root-dept" data-role="department"></div>
-            </div>
-
-            <!-- ════════════════════════════════════════════════════════════════
-                 Зона Базы людей (Для управлений)
-                 Разметку внутри #dept-persons-root рендерит static/js/dept_persons.js
-                 (режимы "Мои люди" / "Личный состав", поиск, сортировка,
-                 пагинация, форма добавления с автоподсказкой из общей базы).
-                 ════════════════════════════════════════════════════════════════ -->
-            <div id="dept-persons-panel" class="hidden" style="margin-top:24px;">
-                <div id="dept-persons-root" class="persons-panel"></div>
             </div>
 
             <!-- Зона Боевого расчёта (Для управлений) -->
@@ -875,7 +856,7 @@
                             </div>
                             <div class="field">
                                 <label class="field-label" for="new-password">Пароль</label>
-                                <input type="text" id="new-password" placeholder="Минимум 6 символов"
+                                <input type="text" id="new-password" placeholder="Минимум 10 символов, буква+цифра"
                                        autocomplete="new-password">
                             </div>
                             <div class="field field--role">
@@ -890,6 +871,17 @@
                                 Добавить
                             </button>
                         </div>
+                        <!-- Чекбоксы доступных вкладок (только для role=department) -->
+                        <div id="new-user-perms-block" style="margin-top:14px;">
+                            <p class="field-label" style="margin-bottom:6px;">Доступные вкладки:</p>
+                            <div id="new-user-perms" class="perms-checkboxes"
+                                 style="display:flex; flex-wrap:wrap; gap:12px 20px;">
+                                <!-- Генерится JS из admin.js:renderPermsCheckboxes -->
+                            </div>
+                            <p class="hint" style="margin-top:6px; font-size:0.78rem; color:var(--md-on-surface-hint);">
+                                Для роли «Администратор» эти настройки игнорируются — он всегда видит всё.
+                            </p>
+                        </div>
                     </div>
                     <div class="data-table-wrap">
                         <table>
@@ -898,7 +890,8 @@
                                     <th style="width:56px;">ID</th>
                                     <th>Пользователь</th>
                                     <th style="width:130px;">Роль</th>
-                                    <th style="width:100px;"></th>
+                                    <th style="min-width:280px;">Доступные вкладки</th>
+                                    <th style="width:140px;"></th>
                                 </tr>
                             </thead>
                             <tbody id="users-tbody"></tbody>

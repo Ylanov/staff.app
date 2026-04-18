@@ -49,8 +49,19 @@ def login_access_token(
 
 @router.get("/me", response_model=dict, summary="Получить данные текущего пользователя")
 def read_users_me(current_user: User = Depends(get_current_user)):
+    # Admin всегда видит всё — возвращаем полный набор независимо от записи в БД.
+    # Department — то что реально разрешил админ (из users.permissions).
+    from app.models.user import AVAILABLE_PERMISSIONS, DEFAULT_PERMISSIONS
+
+    if current_user.role == "admin":
+        permissions = list(AVAILABLE_PERMISSIONS)
+    else:
+        # permissions хранится как JSONB — SQLAlchemy возвращает Python list
+        permissions = current_user.permissions or DEFAULT_PERMISSIONS
+
     return {
-        "id": current_user.id,
-        "username": current_user.username,
-        "role": current_user.role,
+        "id":          current_user.id,
+        "username":    current_user.username,
+        "role":        current_user.role,
+        "permissions": permissions,
     }

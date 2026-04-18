@@ -1,26 +1,13 @@
-# ─── Line endings ────────────────────────────────────────────────────────────
-# Shell-скрипты, которые выполняются внутри Docker-контейнера (Linux),
-# ДОЛЖНЫ иметь LF-окончания строк. На Windows git с core.autocrlf=true
-# по умолчанию превращает LF в CRLF при checkout, что ломает шебанг #!/bin/sh
-# и ведёт к "bad interpreter: No such file or directory" внутри контейнера.
+# Запрещаем автоконверсию CRLF в файлах которые должны быть LF.
+# Shell-скрипты с CRLF ломают bash/sh внутри Linux-контейнеров:
+#   "/bin/sh^M: bad interpreter"  — в начале строки shebang появляется \r.
 *.sh             text eol=lf
 Dockerfile       text eol=lf
 entrypoint.sh    text eol=lf
 
-# Python и конфиги — нормализуем line endings, но без принудительного eol
+# Python и всё остальное — нормализуем line endings при коммите
 *.py             text
 *.yml            text
 *.yaml           text
 *.json           text
 *.md             text
-
-# ─── Бинарные файлы ──────────────────────────────────────────────────────────
-*.png  binary
-*.jpg  binary
-*.jpeg binary
-*.gif  binary
-*.ico  binary
-*.pdf  binary
-*.zip  binary
-*.xlsx binary
-*.docx binary

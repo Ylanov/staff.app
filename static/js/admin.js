@@ -705,6 +705,67 @@ function _closeColumnModal() { el('col-editor-modal')?.remove(); }
 
 // ─── Управление пользователями ────────────────────────────────────────────────
 
+// Доступные вкладки — совпадает с AVAILABLE_PERMISSIONS на бэке (user.py).
+// Если добавляете новую вкладку: правите этот массив + AVAILABLE_PERMISSIONS
+// в Python-модели, плюс добавляете ID кнопки в app.js/_applyPermissionsToTabs.
+const ALL_PERMISSIONS = [
+    { key: 'lists',   label: 'Списки',          hint: 'рабочие списки слотов' },
+    { key: 'duty',    label: 'Графики нарядов', hint: 'личные графики суточного наряда' },
+    { key: 'combat',  label: 'Боевой расчёт',   hint: 'заполнение боевых расчётов' },
+    { key: 'tasks',   label: 'Календарь',       hint: 'личные задачи и планы' },
+    { key: 'persons', label: 'База людей',      hint: 'общий справочник людей' },
+];
+
+// Инициализирует чекбоксы вкладок в форме создания нового пользователя.
+// По умолчанию все отмечены (дефолт бэка).
+export function renderPermsCheckboxes(selected = null, containerId = 'new-user-perms') {
+    const container = document.getElementById(containerId);
+    if (!container) return;
+    const active = selected === null
+        ? new Set(ALL_PERMISSIONS.map(p => p.key))
+        : new Set(selected || []);
+    container.innerHTML = ALL_PERMISSIONS.map(p => `
+        <label style="display:flex; align-items:center; gap:6px; cursor:pointer; font-size:0.88rem;"
+               title="${esc(p.hint)}">
+            <input type="checkbox" class="perm-checkbox"
+                   data-perm="${p.key}"
+                   ${active.has(p.key) ? 'checked' : ''}>
+            ${esc(p.label)}
+        </label>
+    `).join('');
+}
+
+// Читает чекбоксы и возвращает массив выбранных ключей.
+function collectCheckedPerms(containerId = 'new-user-perms') {
+    const container = document.getElementById(containerId);
+    if (!container) return null;
+    return Array.from(container.querySelectorAll('.perm-checkbox'))
+        .filter(cb => cb.checked)
+        .map(cb => cb.dataset.perm);
+}
+
+// Прячет блок permissions когда роль=admin (ему permissions неактуальны)
+function _togglePermsBlock() {
+    const role  = el('new-role')?.value;
+    const block = document.getElementById('new-user-perms-block');
+    if (block) block.style.display = role === 'admin' ? 'none' : '';
+}
+
+function _permsBadges(perms) {
+    // Компактное отображение в таблице: цветные badge'и или «все» если полный набор
+    const p = Array.isArray(perms) ? perms : [];
+    if (p.length === ALL_PERMISSIONS.length) {
+        return `<span class="role-badge" style="background:var(--md-success-light, #e9f7ef); color:var(--md-success, #1e8e3e); border-color:#c7e7ce;">все вкладки</span>`;
+    }
+    if (p.length === 0) {
+        return `<span class="role-badge" style="background:var(--md-warning-light, #fcf3e6); color:var(--md-warning, #b45309); border-color:#f0d9b8;">нет доступа</span>`;
+    }
+    return p.map(key => {
+        const def = ALL_PERMISSIONS.find(x => x.key === key);
+        return `<span class="role-badge" style="margin-right:4px; margin-bottom:2px;">${esc(def?.label || key)}</span>`;
+    }).join('');
+}
+
 export async function loadUsers() {
     try {
         const users = await api.get('/admin/users');
@@ -720,12 +781,22 @@ export async function loadUsers() {
             const statusBadge = u.is_active ? '' :
                 `<span class="role-badge" style="background:var(--md-warning-light); color:var(--md-warning); border-color:#f0d9b8; margin-left:6px;">Деактивирован</span>`;
 
-            const action = u.username === 'admin'
+            // Столбец permissions: для admin всегда «все», для department — бейджи
+            const permsCell = u.role === 'admin'
+                ? `<span class="role-badge" style="background:var(--md-primary-container, #e3f2fd); color:var(--md-on-primary-container, #0d47a1);">все (admin)</span>`
+                : _permsBadges(u.permissions);
+
+            // Действия: Настроить доступ (только department) + Удалить (не admin)
+            const canEditPerms = u.role !== 'admin' && u.username !== 'admin';
+            const editBtn = canEditPerms
+                ? `<button class="btn btn-outlined btn-xs" data-edit-perms="${u.id}" data-username="${esc(u.username)}" title="Изменить вкладки">Доступ</button>`
+                : '';
+            const delBtn = u.username === 'admin'
                 ? `<span style="font-size:0.75rem; color:var(--md-on-surface-hint);">Защищён</span>`
                 : `<button class="btn btn-danger btn-xs" onclick="window.app.deleteUser(${u.id})">Удалить</button>`;
 
             return `
-                <tr>
+                <tr data-user-id="${u.id}">
                     <td style="font-family:var(--md-font-mono); font-size:0.72rem; color:var(--md-on-surface-hint);">${u.id}</td>
                     <td>
                         <strong>${esc(formatRole(u.username))}</strong>
@@ -733,10 +804,72 @@ export async function loadUsers() {
                         ${statusBadge}
                     </td>
                     <td>${roleBadge}</td>
-                    <td>${action}</td>
+                    <td>${permsCell}</td>
+                    <td style="display:flex; gap:6px; flex-wrap:wrap;">${editBtn}${delBtn}</td>
                 </tr>`;
         }).join('');
+
+        // Вешаем обработчик «Доступ» — открывает модалку
+        el('users-tbody').querySelectorAll('[data-edit-perms]').forEach(btn => {
+            btn.addEventListener('click', () => {
+                const userId   = parseInt(btn.dataset.editPerms, 10);
+                const username = btn.dataset.username;
+                const user = users.find(u => u.id === userId);
+                if (user) _openPermsModal(user);
+            });
+        });
     } catch (e) { console.error('loadUsers:', e); showError('Не удалось загрузить пользователей'); }
+}
+
+function _openPermsModal(user) {
+    // Модалка выбора permissions для существующего пользователя.
+    // Рендерим прямо в body — никаких фреймворков, простой backdrop.
+    const existing = document.getElementById('perms-modal');
+    if (existing) existing.remove();
+
+    const modal = document.createElement('div');
+    modal.id = 'perms-modal';
+    modal.style.cssText = `
+        position:fixed; inset:0; z-index:9999; background:rgba(0,0,0,0.4);
+        display:flex; align-items:center; justify-content:center; padding:20px;
+    `;
+    modal.innerHTML = `
+        <div style="background:var(--md-surface,#fff); border-radius:var(--md-radius-lg,12px);
+                    max-width:460px; width:100%; padding:20px;
+                    box-shadow:0 10px 40px rgba(0,0,0,0.15);">
+            <h3 style="margin:0 0 4px; font-size:1.05rem;">Доступные вкладки</h3>
+            <p style="margin:0 0 16px; font-size:0.82rem; color:var(--md-on-surface-hint);">
+                Пользователь: <strong>${esc(formatRole(user.username))}</strong>
+            </p>
+            <div id="perms-modal-list" class="perms-checkboxes"
+                 style="display:flex; flex-direction:column; gap:10px;"></div>
+            <div style="display:flex; justify-content:flex-end; gap:8px; margin-top:18px;">
+                <button id="perms-modal-cancel" class="btn btn-outlined btn-sm" type="button">Отмена</button>
+                <button id="perms-modal-save"   class="btn btn-filled btn-sm"   type="button">Сохранить</button>
+            </div>
+        </div>
+    `;
+    document.body.appendChild(modal);
+
+    // Рендер чекбоксов с текущими значениями пользователя
+    renderPermsCheckboxes(user.permissions || [], 'perms-modal-list');
+
+    // Закрытие по клику на backdrop
+    modal.addEventListener('click', (e) => { if (e.target === modal) modal.remove(); });
+    document.getElementById('perms-modal-cancel').addEventListener('click', () => modal.remove());
+
+    document.getElementById('perms-modal-save').addEventListener('click', async () => {
+        const perms = collectCheckedPerms('perms-modal-list');
+        try {
+            await api.put(`/admin/users/${user.id}/permissions`, { permissions: perms });
+            notify('Доступ обновлён');
+            modal.remove();
+            await loadUsers();
+        } catch (e) {
+            console.error('save perms:', e);
+            showError('Не удалось сохранить: ' + (e.message || 'ошибка'));
+        }
+    });
 }
 
 export async function handleCreateUser() {
@@ -744,15 +877,32 @@ export async function handleCreateUser() {
     const password = el('new-password')?.value;
     const role     = el('new-role')?.value;
     if (!username || !password) return showError('Заполните логин и пароль');
+
+    // Для department собираем permissions из чекбоксов; для admin — не передаём
+    // (бэк проставит дефолт).
+    const payload = { username, password, role };
+    if (role !== 'admin') {
+        const perms = collectCheckedPerms();
+        if (perms && perms.length === 0) {
+            return showError('Выберите хотя бы одну вкладку для пользователя');
+        }
+        payload.permissions = perms;
+    }
+
     try {
-        await api.post('/admin/users', { username, password, role });
+        await api.post('/admin/users', payload);
         el('new-username').value = '';
         el('new-password').value = '';
+        // Сбрасываем чекбоксы на дефолт (все отмечены)
+        renderPermsCheckboxes();
         notify(`Пользователь «${username}» создан`);
         await loadUsers();
     } catch (e) {
         console.error('handleCreateUser:', e);
-        showError(e.status === 409 ? 'Пользователь с таким логином уже существует' : `Ошибка создания: ${e.message ?? e}`);
+        const msg = e.status === 409
+            ? 'Пользователь с таким логином уже существует'
+            : `Ошибка создания: ${e.message ?? e}`;
+        showError(msg);
     }
 }
 
@@ -763,6 +913,13 @@ export async function deleteUser(userId) {
         console.error('deleteUser:', e);
         showError(e.status === 403 ? e.message ?? 'Удаление запрещено' : 'Ошибка удаления пользователя');
     }
+}
+
+// Вешается один раз при инициализации админ-панели (через bindEvents)
+export function initUsersTab() {
+    renderPermsCheckboxes();
+    el('new-role')?.addEventListener('change', _togglePermsBlock);
+    _togglePermsBlock();
 }
 
 // ─── Дежурный ─────────────────────────────────────────────────────────────────

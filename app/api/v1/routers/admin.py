@@ -85,6 +85,9 @@ class SlotQuickCreate(BaseModel):
     position_id: Optional[int] = None
 
 
+from app.models.user import AVAILABLE_PERMISSIONS, DEFAULT_PERMISSIONS
+
+
 class UserCreate(BaseModel):
     username: str = Field(..., min_length=2, max_length=50, strip_whitespace=True)
     # Минимум 10 символов. Требуется буква и цифра.
@@ -93,6 +96,9 @@ class UserCreate(BaseModel):
     # ("Password1!") и снижают реальную энтропию.
     password: str = Field(..., min_length=10, max_length=128)
     role:     Literal["admin", "department"] = "department"
+    # Список вкладок доступных этому пользователю. None → дефолт (все).
+    # Для role='admin' игнорируется — админ всегда видит всё.
+    permissions: Optional[List[str]] = None
 
     @field_validator("password")
     @classmethod
@@ -107,12 +113,45 @@ class UserCreate(BaseModel):
             raise ValueError("Пароль слишком простой")
         return v
 
+    @field_validator("permissions")
+    @classmethod
+    def _validate_permissions(cls, v):
+        if v is None:
+            return None
+        # Убираем дубликаты, сохраняя порядок, и валидируем по whitelist
+        seen = set()
+        clean = []
+        for item in v:
+            if not isinstance(item, str):
+                raise ValueError("permissions должен быть списком строк")
+            if item not in AVAILABLE_PERMISSIONS:
+                raise ValueError(
+                    f"Неизвестная вкладка '{item}'. "
+                    f"Разрешены: {', '.join(AVAILABLE_PERMISSIONS)}"
+                )
+            if item not in seen:
+                seen.add(item)
+                clean.append(item)
+        return clean
+
+
+class UserPermissionsUpdate(BaseModel):
+    """Изменение списка разрешений существующего пользователя."""
+    permissions: List[str] = Field(default_factory=list)
+
+    @field_validator("permissions")
+    @classmethod
+    def _validate(cls, v):
+        # Переиспользуем логику через UserCreate.permissions validator
+        return UserCreate._validate_permissions.__func__(cls, v) or []
+
 
 class UserResponse(BaseModel):
-    id:        int
-    username:  str
-    role:      str
-    is_active: bool
+    id:          int
+    username:    str
+    role:        str
+    is_active:   bool
+    permissions: List[str] = Field(default_factory=lambda: list(DEFAULT_PERMISSIONS))
     model_config = ConfigDict(from_attributes=True)
 
 
@@ -717,15 +756,56 @@ def create_user(
             detail="Пользователь с таким логином уже существует",
         )
 
+    # Если permissions не заданы — используем дефолт (все вкладки).
+    # Для admin-роли permissions всё равно игнорируются при проверках,
+    # но храним для единообразия.
+    perms = user_in.permissions if user_in.permissions is not None else list(DEFAULT_PERMISSIONS)
+
     new_user = User(
         username=user_in.username,
         hashed_password=get_password_hash(user_in.password),
         role=user_in.role,
+        permissions=perms,
     )
     db.add(new_user)
     db.commit()
     db.refresh(new_user)
     return new_user
+
+
+@router.put("/users/{user_id}/permissions", response_model=UserResponse,
+            summary="Изменить список разрешённых вкладок пользователя")
+def update_user_permissions(
+        user_id:       int,
+        payload:       UserPermissionsUpdate,
+        db:            Session = Depends(get_db),
+        current_admin: User    = Depends(get_current_active_admin),
+):
+    """
+    Меняет список вкладок (permissions) у department-пользователя.
+
+    Admin: изменения permissions у admin'а бессмысленны — он всегда видит всё.
+    Но разрешаем (сохраняет консистентность в БД, например если управление
+    сделали админом и потом обратно).
+
+    UI: в админской странице "Пользователи" рядом с каждой строкой будет
+    кнопка шестерёнки / "Настроить доступ".
+    """
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="Пользователь не найден")
+
+    if user.username == "admin":
+        # Защита от случайной блокировки главного админа
+        raise HTTPException(
+            status_code=400,
+            detail="Главному администратору нельзя ограничивать доступ",
+        )
+
+    user.permissions = payload.permissions
+    db.commit()
+    db.refresh(user)
+    return user
 
 
 @router.delete("/users/{user_id}")

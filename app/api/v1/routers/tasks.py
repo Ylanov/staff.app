@@ -28,9 +28,11 @@ from app.db.database import get_db
 from app.models.user import User
 from app.models.task import Task
 from app.schemas.task import TaskCreate, TaskUpdate, TaskResponse
-from app.api.dependencies import get_current_user, get_current_active_admin
+from app.api.dependencies import get_current_user, get_current_active_admin, require_permission
 
-router = APIRouter()
+# Весь роутер задач требует permission "tasks" (admin пропускается автоматически
+# в require_permission). /admin/summary дополнительно защищён get_current_active_admin.
+router = APIRouter(dependencies=[Depends(require_permission("tasks"))])
 
 
 # ─── Helpers ──────────────────────────────────────────────────────────────────

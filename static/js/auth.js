@@ -78,11 +78,19 @@ async function _doInitSession() {
         return;
     }
 
-    // Сохраняем роль глобально, чтобы другие модули могли её использовать
+    // Сохраняем роль и данные пользователя глобально
     window.currentUserRole = user.role;
+    window.currentUser     = user;   // включая permissions для проверок в JS
 
     setUserDisplay(user.username);
     initWebSocket();
+
+    // Скрываем недоступные вкладки управления по user.permissions.
+    // Вызываем немедленно (до showView), чтобы пользователь не увидел вспышку
+    // запрещённых кнопок перед их скрытием. Для admin permissions = все вкладки.
+    if (typeof window._applyPermissionsToTabs === 'function') {
+        window._applyPermissionsToTabs(user.permissions || []);
+    }
 
     const dataPromises = [loadEventsDropdowns()];
     const adminModeBtn = document.getElementById('admin-mode-btn');
@@ -145,10 +153,13 @@ async function _doInitSession() {
             }
         });
 
-        // 3. Запускаем слушатели и инициализацию
+        // 3. Запускаем слушатели и инициализацию.
+        //    Combat и duty инициализируем только если пользователь имеет доступ —
+        //    иначе бэк вернёт 403 и в консоли будет шум.
+        const perms = new Set(user.permissions || []);
         department.listenForUpdates();
-        combatCalc.initCombatCalc(false);
-        await deptDuty.loadDeptDutyData();
+        if (perms.has('combat')) combatCalc.initCombatCalc(false);
+        if (perms.has('duty'))   await deptDuty.loadDeptDutyData();
     }
 }
 

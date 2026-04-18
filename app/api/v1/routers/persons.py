@@ -41,7 +41,7 @@ from pydantic import BaseModel, Field, ConfigDict
 from app.db.database import get_db
 from app.models.person import Person
 from app.models.user import User
-from app.api.dependencies import get_current_user, get_current_active_admin
+from app.api.dependencies import get_current_user, get_current_active_admin, require_permission
 
 router = APIRouter()
 
@@ -592,7 +592,7 @@ async def import_persons_from_excel(
 @router.get("", summary="Получить базу людей")
 def get_all_persons(
         db:   Session = Depends(get_db),
-        current_user: User = Depends(get_current_user),
+        current_user: User = Depends(require_permission("persons")),
         skip:  int = Query(0, ge=0),
         limit: int = Query(500, ge=1, le=2000),
         q:     Optional[str] = Query(None),
@@ -602,34 +602,24 @@ def get_all_persons(
         unassigned: bool = Query(False),
 ):
     """
-    База людей с гибким режимом ответа (обратная совместимость).
+    База людей с гибким режимом ответа.
 
     Видимость:
-      • admin: все записи.
-      • department: свои (department == username) + "общие" (department IS NULL).
-        "Общие" = те кого импортировали без управления — общий резерв,
-        доступный всем для выбора и применения к себе через /apply-person.
-      • unassigned=true (только для department): только "общие" (IS NULL).
-        Удобно показать отдельно во вкладке "Личный состав".
+      • admin: все записи;
+      • department: свои + "общие" (department IS NULL);
+      • unassigned=true: только общие (IS NULL).
 
     Формат ответа:
-      • Без параметра page — плоский список List[PersonResponse] (старый
-        контракт, используется в admin-UI /ui.js и автодополнениях).
-      • С параметром page — пагинированный объект:
-            {items, total, page, pages, limit}
-        используется в dept_persons.js со страницами и сортировкой.
+      • Без ?page= — плоский список List[PersonResponse] (старый контракт).
+      • С ?page= — {items, total, page, pages, limit} для dept_persons.js.
 
-    Сортировка по полям full_name | rank | doc_number | department | created_at.
-
-    ИСПРАВЛЕНО: раньше department видел ТОЛЬКО свои (filter ==username),
-    и ~700 общих записей были недоступны. Теперь фильтр совпадает
-    с /persons/search и включает IS NULL.
+    Permission: требуется "persons" в user.permissions (admin — всегда ок).
     """
     from sqlalchemy import or_, desc as sa_desc, asc as sa_asc
 
     query = db.query(Person)
 
-    # ── Видимость по роли ─────────────────────────────────────────────────────
+    # Видимость по роли
     if current_user.role != "admin":
         if unassigned:
             query = query.filter(Person.department.is_(None))
@@ -641,20 +631,17 @@ def get_all_persons(
                 )
             )
     elif unassigned:
-        # для admin unassigned=true тоже работает — показать "ничьи"
         query = query.filter(Person.department.is_(None))
 
     if q:
         query = query.filter(Person.full_name.ilike(f"%{q}%"))
 
-    # ── Сортировка ────────────────────────────────────────────────────────────
+    # Сортировка
     sort_col = getattr(Person, sort, Person.full_name)
     direction = sa_desc if order == "desc" else sa_asc
-    # NULL всегда в конце — чтобы "общие" (department IS NULL) не лезли наверх
-    # при сортировке по department
     query = query.order_by(direction(sort_col).nullslast(), Person.id.asc())
 
-    # ── Paginated режим ───────────────────────────────────────────────────────
+    # Paginated режим
     if page is not None:
         total = query.count()
         pages = max(1, (total + limit - 1) // limit)
@@ -667,7 +654,7 @@ def get_all_persons(
             "limit":  limit,
         }
 
-    # ── Flat list режим (старый контракт) ─────────────────────────────────────
+    # Flat list режим (backward compatible)
     rows = query.offset(skip).limit(limit).all()
     return [PersonResponse.model_validate(p) for p in rows]
 
@@ -677,7 +664,7 @@ def get_all_persons(
 def create_person(
         person_in: PersonCreate,
         db:        Session = Depends(get_db),
-        current_user: User = Depends(get_current_user),
+        current_user: User = Depends(require_permission("persons")),
 ):
     department = person_in.department if current_user.role == "admin" else current_user.username
 
@@ -712,7 +699,7 @@ def update_person(
         person_id: int,
         person_in: PersonUpdate,
         db:        Session = Depends(get_db),
-        current_user: User = Depends(get_current_user),
+        current_user: User = Depends(require_permission("persons")),
 ):
     person = db.query(Person).filter(Person.id == person_id).first()
     if not person:
@@ -738,7 +725,7 @@ def update_person(
 def delete_person(
         person_id: int,
         db:        Session = Depends(get_db),
-        current_user: User = Depends(get_current_user),
+        current_user: User = Depends(require_permission("persons")),
 ):
     person = db.query(Person).filter(Person.id == person_id).first()
     if not person:
