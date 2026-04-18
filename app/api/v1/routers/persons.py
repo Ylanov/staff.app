@@ -597,9 +597,26 @@ def get_all_persons(
         limit: int = Query(500, ge=1, le=2000),
         q:     Optional[str] = Query(None),
 ):
+    """
+    Admin видит всех.
+    Department видит свои (department == username) + "общие" (department IS NULL).
+
+    ИСПРАВЛЕНО: раньше department видел ТОЛЬКО свои, и ~700 общих записей
+    (с department='' от старых импортов — нормализованы в NULL миграцией
+    b2c3d4e5f6a7) были недоступны. Это именно "общая база людей" из ТЗ:
+    все управления видят общий справочник, но редактируют только свои.
+    Фильтр совпадает с /persons/search.
+    """
+    from sqlalchemy import or_
+
     query = db.query(Person)
     if current_user.role != "admin":
-        query = query.filter(Person.department == current_user.username)
+        query = query.filter(
+            or_(
+                Person.department == current_user.username,
+                Person.department.is_(None),
+            )
+        )
     if q:
         query = query.filter(Person.full_name.ilike(f"%{q}%"))
     return query.order_by(Person.full_name).offset(skip).limit(limit).all()
