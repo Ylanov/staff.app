@@ -85,6 +85,10 @@ class AddPersonPayload(BaseModel):
 class MarkPayload(BaseModel):
     person_id: int
     duty_date: date_type
+    # Тип отметки. Клиент может прислать явно; по умолчанию 'N' (Наряд) —
+    # сохраняет обратную совместимость с существующим фронтом, который
+    # шлёт только person_id+duty_date без mark_type.
+    mark_type: str = "N"
 
 
 # ─── Schedules CRUD ───────────────────────────────────────────────────────────
@@ -256,6 +260,7 @@ def get_marks(
             "id":        m.id,
             "person_id": m.person_id,
             "duty_date": m.duty_date.isoformat(),
+            "mark_type": m.mark_type or "N",
         }
         for m in marks
     ]
@@ -282,7 +287,16 @@ async def toggle_mark(
     if not person:
         raise HTTPException(status_code=404, detail="Человек не найден")
 
-    # ── Снять метку если уже стоит ────────────────────────────────────────────
+    # Валидация mark_type
+    from app.models.duty import ALL_MARK_TYPES, MARK_DUTY
+    mark_type = (payload.mark_type or MARK_DUTY).upper()
+    if mark_type not in ALL_MARK_TYPES:
+        raise HTTPException(status_code=400, detail=f"Недопустимый тип отметки: {mark_type}")
+
+    # ── Toggle-логика ─────────────────────────────────────────────────────────
+    # Если уже стоит отметка на эту дату:
+    #   - того же типа → снимаем (toggle);
+    #   - другого типа → переключаем на новый тип (удобнее чем "сначала снимите").
     existing = db.query(DutyMark).filter(
         DutyMark.schedule_id == schedule_id,
         DutyMark.person_id   == payload.person_id,
@@ -290,18 +304,38 @@ async def toggle_mark(
     ).first()
 
     if existing:
-        db.delete(existing)
-        db.commit()
-        logger.debug(f"Removed mark: person={person.full_name} date={payload.duty_date}")
-        return {"action": "removed", "filled_events_count": 0}
+        if existing.mark_type == mark_type:
+            db.delete(existing)
+            db.commit()
+            logger.debug(f"Removed mark: person={person.full_name} date={payload.duty_date} type={mark_type}")
+            return {"action": "removed", "filled_events_count": 0}
+        else:
+            # Переключаем тип, не удаляя запись
+            existing.mark_type = mark_type
+            db.commit()
+            logger.debug(f"Changed mark type: person={person.full_name} date={payload.duty_date} → {mark_type}")
+            # Автозаполнение делаем только для MARK_DUTY (см. ниже)
+            # Продолжаем в ветке "Поставить метку"
+            if mark_type != MARK_DUTY:
+                return {"action": "changed", "mark_type": mark_type, "filled_events_count": 0}
+            # Иначе идём дальше — автозаполним списки
+            mark = existing
+    else:
+        # ── Поставить новую метку ─────────────────────────────────────────────
+        mark = DutyMark(
+            schedule_id=schedule_id,
+            person_id=payload.person_id,
+            duty_date=payload.duty_date,
+            mark_type=mark_type,
+        )
+        db.add(mark)
 
-    # ── Поставить метку ───────────────────────────────────────────────────────
-    mark = DutyMark(
-        schedule_id=schedule_id,
-        person_id=payload.person_id,
-        duty_date=payload.duty_date,
-    )
-    db.add(mark)
+    # Автозаполнение списков только для MARK_DUTY — отпуск/увольнение не
+    # должны автоматически вставлять человека в боевые списки.
+    if mark_type != MARK_DUTY:
+        db.commit()
+        logger.debug(f"Non-duty mark {mark_type} set for person={person.full_name} date={payload.duty_date}")
+        return {"action": "created", "mark_type": mark_type, "filled_events_count": 0}
 
     logger.debug(f"Toggle ON: person='{person.full_name}' date={payload.duty_date}")
 

@@ -1,0 +1,200 @@
+/* ══════════════════════════════════════════════════════════════════════════
+   Graphика нарядов — улучшенная стилизация: Н/У/О квадраты, подсветка
+   выходных и праздников, колонки счётчиков, полоса «Отпуск».
+   Применяется поверх уже существующих .duty-grid* в style.css.
+   ══════════════════════════════════════════════════════════════════════════ */
+
+/* ── Режимы отметок (кнопки-пилюли) ─────────────────────────────────────── */
+.duty-mode-group {
+    display: inline-flex;
+    gap: 2px;
+    padding: 3px;
+    background: var(--md-surface-variant, #f1f5f9);
+    border-radius: 999px;
+    margin-right: 8px;
+}
+.duty-mode-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: 5px 12px;
+    border: none;
+    background: transparent;
+    color: var(--md-on-surface-variant, #475569);
+    font-size: 0.78rem;
+    font-weight: 500;
+    cursor: pointer;
+    border-radius: 999px;
+    transition: all 0.12s;
+}
+.duty-mode-btn:hover { color: var(--md-on-surface, #111); }
+.duty-mode-btn.active {
+    color: white;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
+}
+.duty-mode-btn.active[data-mark="N"] { background: #1e293b; }
+.duty-mode-btn.active[data-mark="U"] { background: #d97706; }
+.duty-mode-btn.active[data-mark="V"] { background: #059669; }
+
+.duty-mode-btn__letter {
+    width: 18px; height: 18px;
+    display: inline-flex; align-items: center; justify-content: center;
+    background: currentColor;
+    color: inherit;
+    border-radius: 3px;
+    font-weight: 800;
+    font-size: 0.68rem;
+    position: relative;
+}
+.duty-mode-btn__letter::after {
+    content: attr(data-letter);
+    position: absolute;
+    color: var(--md-surface, #fff);
+    mix-blend-mode: difference;
+}
+.duty-mode-btn.active .duty-mode-btn__letter { background: rgba(255,255,255,0.9); }
+.duty-mode-btn.active .duty-mode-btn__letter::after { color: inherit; mix-blend-mode: normal; }
+
+/* ── Подсветка столбцов выходных / праздников ────────────────────────── */
+.duty-grid th.duty-col--weekend,
+.duty-grid td.duty-col--weekend {
+    background: #f8fafc;
+}
+.duty-grid th.duty-col--holiday,
+.duty-grid td.duty-col--holiday {
+    background: #fff1f2;   /* лёгкая роза для праздников */
+}
+.duty-grid th.duty-col--weekend,
+.duty-grid th.duty-col--holiday {
+    color: #b91c1c !important;
+}
+
+/* День недели под числом */
+.duty-grid .duty-dow {
+    display: block;
+    font-size: 0.6rem;
+    font-weight: 500;
+    color: var(--md-on-surface-hint, #9ca3af);
+    margin-top: 1px;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+}
+.duty-grid th.duty-col--weekend .duty-dow,
+.duty-grid th.duty-col--holiday .duty-dow { color: #b91c1c; }
+
+/* ── Квадратики отметок ─────────────────────────────────────────────────── */
+.duty-mark {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 22px;
+    height: 22px;
+    border-radius: 4px;
+    font-weight: 800;
+    font-size: 0.74rem;
+    color: #fff;
+    line-height: 1;
+    user-select: none;
+    pointer-events: none;   /* клик ловит родительская td */
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.14);
+}
+.duty-mark--N { background: #1e293b; }   /* чёрный/графит — Наряд */
+.duty-mark--U { background: #d97706; }   /* янтарный — Увольнение */
+.duty-mark--V { background: #059669; }   /* изумрудный — Отпуск (одиночный) */
+
+/* Hover на ячейку — показываем что клик сработает */
+.duty-grid tbody td {
+    cursor: pointer;
+    transition: background-color 0.08s;
+    position: relative;
+}
+.duty-grid tbody td:hover:not(.duty-cell--disabled) {
+    background: rgba(25, 118, 210, 0.06);
+}
+.duty-grid tbody td.duty-cell--disabled { cursor: not-allowed; }
+
+/* ── Полоса отпуска (объединённые ячейки) ──────────────────────────────── */
+.duty-vacation-bar {
+    position: absolute;
+    left: 2px;
+    right: 2px;
+    top: 50%;
+    transform: translateY(-50%);
+    height: 22px;
+    background: linear-gradient(90deg,
+                rgba(5, 150, 105, 0.18),
+                rgba(5, 150, 105, 0.28),
+                rgba(5, 150, 105, 0.18));
+    border: 1px solid rgba(5, 150, 105, 0.45);
+    border-radius: 4px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 0.68rem;
+    font-weight: 700;
+    color: #065f46;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    pointer-events: none;
+    overflow: hidden;
+    white-space: nowrap;
+}
+
+/* Ячейки, попавшие в полосу отпуска — не показываем квадратик отдельно
+   (рендерится как пустая ячейка, а поверх рисуется объединённая полоса). */
+.duty-cell--in-vacation {
+    background: rgba(5, 150, 105, 0.04);
+}
+
+/* ── Счётчики (колонки в конце строки) ────────────────────────────────── */
+.duty-grid .duty-summary-th,
+.duty-grid .duty-summary-td {
+    background: var(--md-surface-variant, #f8fafc);
+    border-left: 2px solid var(--md-outline-variant, #e5e7eb);
+    text-align: center;
+    font-weight: 600;
+    white-space: nowrap;
+    padding: 4px 8px;
+}
+
+.duty-grid .duty-summary-td__num {
+    display: inline-block;
+    min-width: 22px;
+    padding: 2px 6px;
+    border-radius: 999px;
+    background: #f1f5f9;
+    color: var(--md-on-surface-variant, #334155);
+    font-size: 0.8rem;
+    font-weight: 700;
+    line-height: 1;
+}
+.duty-grid .duty-summary-td__num--hours {
+    background: #e0f2fe;
+    color: #075985;
+}
+.duty-grid .duty-summary-td__num--duty {
+    background: #1e293b;
+    color: #fff;
+}
+
+/* ── ФИО первой колонки ─────────────────────────────────────────────────── */
+.duty-grid .duty-name-td {
+    font-weight: 500;
+    color: var(--md-on-surface, #111);
+    white-space: nowrap;
+    position: sticky;
+    left: 0;
+    background: var(--md-surface, #fff);
+    z-index: 1;
+    box-shadow: 2px 0 4px rgba(0,0,0,0.04);
+    padding-right: 8px;
+}
+
+.duty-grid tbody tr:hover .duty-name-td {
+    background: rgba(25, 118, 210, 0.04);
+}
+
+/* ── Лёгкая зебра для читаемости широкой таблицы ───────────────────────── */
+.duty-grid tbody tr:nth-child(even) td:not(.duty-col--weekend):not(.duty-col--holiday):not(.duty-name-td):not(.duty-summary-td) {
+    background: #fafbfc;
+}

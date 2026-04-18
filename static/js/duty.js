@@ -4,6 +4,11 @@
  */
 
 import { api } from './api.js';
+import {
+    MARK_DUTY, MARK_LEAVE, MARK_VACATION, MARK_LETTER, MARK_LABEL,
+    getHolidaysMap, hoursForDate, isWeekendOrHoliday,
+    groupMarks, computeSummary, extractVacationRanges,
+} from './duty_calc.js';
 
 // ─── State ────────────────────────────────────────────────────────────────────
 
@@ -14,6 +19,9 @@ let _currentMarks   = [];
 let _year           = new Date().getFullYear();
 let _month          = new Date().getMonth() + 1;   // 1-based
 let _positions      = [];
+let _holidays       = new Map();
+let _currentMode    = MARK_DUTY;   // активный режим: N / U / V (vacation start)
+let _vacationStart  = null;        // personId — ждём вторую дату для диапазона
 let _searchTimeout  = null;
 
 // ─── Init ─────────────────────────────────────────────────────────────────────
@@ -215,11 +223,17 @@ async function _loadGrid() {
     document.getElementById('duty-person-search-wrap')?.classList.add('hidden');
 
     try {
-        [_currentPersons, _currentMarks] = await Promise.all([
+        const [persons, marks, holidays] = await Promise.all([
             api.get(`/admin/schedules/${_currentId}/persons`),
             api.get(`/admin/schedules/${_currentId}/marks?year=${_year}&month=${_month}`),
+            getHolidaysMap(_year),
         ]);
-        console.log('[duty] Grid loaded — persons:', _currentPersons.length, 'marks:', _currentMarks.length);
+        _currentPersons = persons;
+        _currentMarks   = marks;
+        _holidays       = holidays;
+        console.log('[duty] Grid loaded — persons:', _currentPersons.length,
+                    'marks:', _currentMarks.length,
+                    'holidays:', _holidays.size);
     } catch (err) {
         console.error('[duty] _loadGrid error:', err);
         window.showSnackbar?.('Ошибка загрузки данных графика', 'error');
@@ -247,50 +261,129 @@ function _renderGrid() {
     const table = document.getElementById('duty-grid-table');
     if (!table) return;
 
-    const days   = _daysInMonth(_year, _month);
-    const today  = new Date();
+    _renderModeSwitcher();
+
+    const days  = _daysInMonth(_year, _month);
+    const today = new Date();
     const todayD = today.getDate();
     const isThisMonth = today.getFullYear() === _year && today.getMonth() + 1 === _month;
 
-    // Set для быстрого поиска O(1)
-    const markSet = new Set(_currentMarks.map(m => `${m.person_id}|${m.duty_date}`));
+    // Массив iso-дат месяца — для vacation-range и look-ups
+    const monthDays = Array.from({ length: days }, (_, i) =>
+        `${_year}-${String(_month).padStart(2, '0')}-${String(i + 1).padStart(2, '0')}`);
+
+    const marksByPerson = groupMarks(_currentMarks);
 
     const DAY_ABBR = ['Вс','Пн','Вт','Ср','Чт','Пт','Сб'];
 
-    // Шапка: номера дней
-    const dayHeaders = Array.from({ length: days }, (_, i) => {
-        const d         = i + 1;
-        const dow       = new Date(_year, _month - 1, d).getDay();
-        const isWeekend = dow === 0 || dow === 6;
-        const isToday   = isThisMonth && d === todayD;
-        return `<th class="duty-grid__day-hdr${isWeekend ? ' duty-grid__day-hdr--weekend' : ''}${isToday ? ' duty-grid__day-hdr--today' : ''}"
-                    title="${DAY_ABBR[dow]}">${d}</th>`;
+    // Шапка: номер дня + сокращённый день недели, выходные/праздники красным
+    const dayHeaders = monthDays.map((iso, idx) => {
+        const d     = idx + 1;
+        const date  = new Date(_year, _month - 1, d);
+        const dow   = date.getDay();
+        const isWk  = dow === 0 || dow === 6;
+        const holi  = _holidays.get(iso);
+        const isTdy = isThisMonth && d === todayD;
+        const classes = [
+            'duty-grid__day-hdr',
+            isWk   ? 'duty-col--weekend' : '',
+            holi   ? 'duty-col--holiday' : '',
+            isTdy  ? 'duty-grid__day-hdr--today' : '',
+        ].filter(Boolean).join(' ');
+        const title = holi ? `${DAY_ABBR[dow]} — ${_esc(holi.title)}` : DAY_ABBR[dow];
+        return `<th class="${classes}" title="${title}">
+                    ${d}
+                    <span class="duty-dow">${DAY_ABBR[dow]}</span>
+                </th>`;
     }).join('');
 
     // Строки с людьми
     const rows = _currentPersons.map(p => {
-        const cells = Array.from({ length: days }, (_, i) => {
-            const d       = i + 1;
-            const dateStr = `${_year}-${String(_month).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
-            const on      = markSet.has(`${p.person_id}|${dateStr}`);
-            const dow     = new Date(_year, _month - 1, d).getDay();
-            const isWeekend = dow === 0 || dow === 6;
-            const isToday   = isThisMonth && d === todayD;
+        const personMarks = marksByPerson.get(p.person_id) || new Map();
+        const vacRanges   = extractVacationRanges(personMarks, monthDays);
 
-            return `<td class="duty-grid__cell${on ? ' duty-grid__cell--on' : ''}${isWeekend ? ' duty-grid__cell--weekend' : ''}${isToday ? ' duty-grid__cell--today' : ''}"
+        // Map iso → range info (only if vacation day)
+        const vacMap = new Map();
+        for (const r of vacRanges) {
+            const s = monthDays.indexOf(r.start_iso);
+            const e = monthDays.indexOf(r.end_iso);
+            for (let i = s; i <= e; i++) {
+                vacMap.set(monthDays[i], {
+                    isFirst: i === s,
+                    length:  r.days,
+                });
+            }
+        }
+
+        const cells = monthDays.map((iso, idx) => {
+            const d       = idx + 1;
+            const dow     = new Date(_year, _month - 1, d).getDay();
+            const isWk    = dow === 0 || dow === 6;
+            const holi    = _holidays.get(iso);
+            const isTdy   = isThisMonth && d === todayD;
+            const mark    = personMarks.get(iso);
+            const vac     = vacMap.get(iso);
+
+            const classes = [
+                'duty-grid__cell',
+                isWk ? 'duty-col--weekend' : '',
+                holi ? 'duty-col--holiday' : '',
+                isTdy ? 'duty-grid__cell--today' : '',
+                vac  ? 'duty-cell--in-vacation' : '',
+            ].filter(Boolean).join(' ');
+
+            let inner = '';
+            if (vac) {
+                // Полоса отпуска рендерится только в первой ячейке диапазона
+                // через абсолютное позиционирование на N ячеек подряд.
+                if (vac.isFirst) {
+                    // Ширина в % = число дней × 100% + промежутки. Проще:
+                    // используем colspan-эмуляцию через абсолют. Позволим
+                    // ей выйти за пределы ячейки — flexible для визуала.
+                    inner = `<div class="duty-vacation-bar"
+                                  style="width: calc(${vac.length * 100}% + ${vac.length - 1}px);"
+                                  title="Отпуск: ${vac.length} дн.">
+                                 ОТПУСК
+                             </div>`;
+                }
+            } else if (mark) {
+                inner = `<span class="duty-mark duty-mark--${mark.mark_type}"
+                               title="${MARK_LABEL[mark.mark_type] || ''}">${MARK_LETTER[mark.mark_type] || ''}</span>`;
+            }
+
+            const hoursTip = hoursForDate(iso, _holidays);
+            const titleAttr = `${_esc(p.full_name)} — ${iso}` +
+                              (holi ? ` · ${_esc(holi.title)}` : '') +
+                              ` · +${hoursTip}ч`;
+
+            return `<td class="${classes}"
                         data-person-id="${p.person_id}"
-                        data-date="${dateStr}"
-                        title="${_esc(p.full_name)} — ${dateStr}">
-                        ${on ? '<span class="duty-grid__mark">■</span>' : ''}
+                        data-date="${iso}"
+                        title="${titleAttr}">
+                        ${inner}
                     </td>`;
         }).join('');
+
+        // Счётчики
+        const sum = computeSummary(personMarks, _holidays);
+        const summaryCells = `
+            <td class="duty-summary-td" title="Нарядов">
+                <span class="duty-summary-td__num duty-summary-td__num--duty">${sum.duty}</span>
+            </td>
+            <td class="duty-summary-td" title="Часов переработки">
+                <span class="duty-summary-td__num duty-summary-td__num--hours">${sum.overtime}</span>
+            </td>
+            <td class="duty-summary-td" title="Увольнений / дней отпуска">
+                <span class="duty-summary-td__num">${sum.leave}/${sum.vacation}</span>
+            </td>
+        `;
 
         const rankBadge = p.rank
             ? `<span class="duty-grid__rank">${_esc(p.rank)}</span>`
             : '';
 
-        return `<tr>
-            <td class="duty-grid__name-cell">
+        return `<tr data-person-id="${p.person_id}">
+            <td class="duty-grid__name-cell duty-name-td">
                 <div class="duty-grid__name-wrap">
                     <button class="duty-grid__remove-person"
                             data-remove-person="${p.person_id}"
@@ -302,11 +395,13 @@ function _renderGrid() {
                 </div>
             </td>
             ${cells}
+            ${summaryCells}
         </tr>`;
     }).join('');
 
+    const totalCols = days + 4;   // ФИО + days + 3 summary
     const emptyRow = _currentPersons.length === 0
-        ? `<tr><td colspan="${days + 1}"
+        ? `<tr><td colspan="${totalCols}"
                style="text-align:center;padding:24px;color:var(--md-on-surface-hint);font-size:0.85rem;">
                Нет людей — добавьте через кнопку «+ Добавить человека»
            </td></tr>`
@@ -314,13 +409,17 @@ function _renderGrid() {
 
     table.innerHTML = `
         <colgroup>
-            <col style="min-width:200px;width:200px;">
+            <col style="min-width:220px;width:220px;">
             ${Array.from({ length: days }, () => '<col style="width:32px;min-width:28px;">').join('')}
+            <col style="width:56px;"><col style="width:56px;"><col style="width:60px;">
         </colgroup>
         <thead>
             <tr>
                 <th class="duty-grid__name-hdr">ФИО</th>
                 ${dayHeaders}
+                <th class="duty-summary-th" title="Кол-во нарядов">Н</th>
+                <th class="duty-summary-th" title="Часы переработки">Часы</th>
+                <th class="duty-summary-th" title="Увольнения / Отпуск">У/О</th>
             </tr>
         </thead>
         <tbody>${rows || emptyRow}</tbody>`;
@@ -335,41 +434,140 @@ function _renderGrid() {
             return;
         }
         if (cell) {
-            await _toggleMark(parseInt(cell.dataset.personId), cell.dataset.date, cell);
+            await _onCellClick(
+                parseInt(cell.dataset.personId),
+                cell.dataset.date,
+                cell,
+                e.shiftKey,
+            );
         }
     };
 }
 
-async function _toggleMark(personId, dateStr, cellEl) {
+// ─── Переключатель режимов (Н / У / Отпуск) ────────────────────────────────
+function _renderModeSwitcher() {
+    const toolbar = document.querySelector('.duty-grid-toolbar');
+    if (!toolbar) return;
+    if (toolbar.querySelector('.duty-mode-group')) return;   // уже отрисован
+
+    const group = document.createElement('div');
+    group.className = 'duty-mode-group';
+    group.innerHTML = `
+        <button class="duty-mode-btn ${_currentMode === MARK_DUTY     ? 'active' : ''}" data-mark="N" type="button" title="Наряд">
+            <span class="duty-mode-btn__letter" data-letter="Н"></span>Наряд
+        </button>
+        <button class="duty-mode-btn ${_currentMode === MARK_LEAVE    ? 'active' : ''}" data-mark="U" type="button" title="Увольнение">
+            <span class="duty-mode-btn__letter" data-letter="У"></span>Увольнение
+        </button>
+        <button class="duty-mode-btn ${_currentMode === MARK_VACATION ? 'active' : ''}" data-mark="V" type="button" title="Отпуск — кликните по первой дате, затем по последней">
+            <span class="duty-mode-btn__letter" data-letter="О"></span>Отпуск
+        </button>
+    `;
+    group.addEventListener('click', (e) => {
+        const b = e.target.closest('[data-mark]');
+        if (!b) return;
+        _currentMode   = b.dataset.mark;
+        _vacationStart = null;
+        group.querySelectorAll('.duty-mode-btn').forEach(x => x.classList.remove('active'));
+        b.classList.add('active');
+        if (_currentMode === MARK_VACATION) {
+            window.showSnackbar?.('Режим «Отпуск»: кликните на первую дату диапазона, затем на последнюю', 'info');
+        }
+    });
+
+    // Вставляем перед кнопкой "+ Добавить человека" (или в начало)
+    toolbar.insertBefore(group, toolbar.firstChild);
+}
+
+async function _onCellClick(personId, dateStr, cellEl, isShift) {
+    // В режиме отпуска — двухступенчатый выбор диапазона
+    if (_currentMode === MARK_VACATION) {
+        if (_vacationStart && _vacationStart.personId === personId) {
+            // Вторая точка выбрана — ставим диапазон
+            const startDate = _vacationStart.date <= dateStr ? _vacationStart.date : dateStr;
+            const endDate   = _vacationStart.date <= dateStr ? dateStr : _vacationStart.date;
+            _vacationStart = null;
+            await _applyVacationRange(personId, startDate, endDate);
+            return;
+        }
+        // Первая точка — запомнили
+        _vacationStart = { personId, date: dateStr };
+        cellEl.style.outline = '2px dashed #059669';
+        window.showSnackbar?.(`Начало: ${dateStr}. Кликните на конец диапазона.`, 'info');
+        return;
+    }
+
+    // Обычный клик — toggle одной отметкой
+    await _toggleMark(personId, dateStr, _currentMode);
+}
+
+async function _applyVacationRange(personId, startIso, endIso) {
+    // Посылаем по одному дню — бэкенд с toggle-логикой либо поставит,
+    // либо (если уже отпуск) снимет. Для "заполнения диапазона" не снимаем:
+    // сначала читаем что в этих днях и отправляем только недостающие.
+    const s = new Date(startIso + 'T00:00:00');
+    const e = new Date(endIso   + 'T00:00:00');
+    const ops = [];
+    const cur = new Date(s);
+    while (cur <= e) {
+        const iso = `${cur.getFullYear()}-${String(cur.getMonth()+1).padStart(2,'0')}-${String(cur.getDate()).padStart(2,'0')}`;
+        // Не трогаем дни где уже стоит V — они уже отмечены
+        const existing = _currentMarks.find(m => m.person_id === personId && m.duty_date === iso);
+        if (!existing || existing.mark_type !== MARK_VACATION) {
+            ops.push(iso);
+        }
+        cur.setDate(cur.getDate() + 1);
+    }
+    try {
+        for (const iso of ops) {
+            await api.post(`/admin/schedules/${_currentId}/marks`, {
+                person_id: personId,
+                duty_date: iso,
+                mark_type: MARK_VACATION,
+            });
+        }
+        await _loadGrid();
+        window.showSnackbar?.(`Отпуск поставлен (${ops.length} дн.)`, 'success');
+    } catch (err) {
+        console.error('[duty] vacation range:', err);
+        window.showSnackbar?.('Ошибка постановки отпуска', 'error');
+        await _loadGrid();
+    }
+}
+
+async function _toggleMark(personId, dateStr, markType = MARK_DUTY) {
     try {
         const res = await api.post(`/admin/schedules/${_currentId}/marks`, {
             person_id: personId,
             duty_date: dateStr,
+            mark_type: markType,
         });
         console.log('[duty] toggleMark result:', res);
 
-        const isOn = res.action === 'added';
-
-        // Обновляем UI без перезагрузки
-        cellEl.classList.toggle('duty-grid__cell--on', isOn);
-        cellEl.innerHTML = isOn ? '<span class="duty-grid__mark">■</span>' : '';
-
-        if (isOn) {
-            _currentMarks.push({ person_id: personId, duty_date: dateStr });
-            if (res.filled_events_count > 0) {
-                window.showSnackbar?.(
-                    `Наряд выставлен. Заполнено автоматически: ${res.filled_events_count} ${
-                        res.filled_events_count === 1 ? 'список' :
-                        res.filled_events_count < 5  ? 'списка' : 'списков'
-                    }`,
-                    'success'
-                );
-            }
-        } else {
+        // Обновляем локальный _currentMarks на основе ответа
+        if (res.action === 'removed') {
             _currentMarks = _currentMarks.filter(
                 m => !(m.person_id === personId && m.duty_date === dateStr)
             );
+        } else if (res.action === 'created' || res.action === 'added') {
+            _currentMarks.push({
+                person_id: personId, duty_date: dateStr,
+                mark_type: res.mark_type || markType,
+            });
+        } else if (res.action === 'changed') {
+            const idx = _currentMarks.findIndex(
+                m => m.person_id === personId && m.duty_date === dateStr);
+            if (idx !== -1) _currentMarks[idx].mark_type = res.mark_type || markType;
         }
+
+        if (res.filled_events_count > 0) {
+            window.showSnackbar?.(
+                `Наряд выставлен. Заполнено: ${res.filled_events_count}`,
+                'success',
+            );
+        }
+
+        _renderGrid();
     } catch (err) {
         console.error('[duty] toggleMark error:', err);
         window.showSnackbar?.(`Ошибка: ${err?.message || 'сервер'}`, 'error');

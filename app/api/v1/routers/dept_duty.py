@@ -81,6 +81,7 @@ class DeptAddPersonPayload(BaseModel):
 class DeptMarkPayload(BaseModel):
     person_id: int
     duty_date: date_type
+    mark_type: str = "N"   # 'N' / 'U' / 'V'
 
 @router.get("/positions", summary="Получить список должностей для выпадающего меню")
 def get_dept_positions(
@@ -282,6 +283,7 @@ def get_my_marks(
             "id":        m.id,
             "person_id": m.person_id,
             "duty_date": m.duty_date.isoformat(),
+            "mark_type": m.mark_type or "N",
         }
         for m in marks
     ]
@@ -308,7 +310,12 @@ async def toggle_my_mark(
     if not person:
         raise HTTPException(status_code=404, detail="Человек не найден")
 
-    # ── Снять метку если уже стоит ────────────────────────────────────────────
+    from app.models.duty import ALL_MARK_TYPES, MARK_DUTY
+    mark_type = (payload.mark_type or MARK_DUTY).upper()
+    if mark_type not in ALL_MARK_TYPES:
+        raise HTTPException(status_code=400, detail=f"Недопустимый тип отметки: {mark_type}")
+
+    # Toggle: same type → снимаем; different type → переключаем
     existing = db.query(DutyMark).filter(
         DutyMark.schedule_id == schedule_id,
         DutyMark.person_id   == payload.person_id,
@@ -316,17 +323,28 @@ async def toggle_my_mark(
     ).first()
 
     if existing:
-        db.delete(existing)
+        if existing.mark_type == mark_type:
+            db.delete(existing)
+            db.commit()
+            return {"action": "removed", "filled_slots_count": 0}
+        existing.mark_type = mark_type
         db.commit()
-        return {"action": "removed", "filled_slots_count": 0}
+        if mark_type != MARK_DUTY:
+            return {"action": "changed", "mark_type": mark_type, "filled_slots_count": 0}
+        mark = existing
+    else:
+        mark = DutyMark(
+            schedule_id=schedule_id,
+            person_id=payload.person_id,
+            duty_date=payload.duty_date,
+            mark_type=mark_type,
+        )
+        db.add(mark)
 
-    # ── Поставить метку ───────────────────────────────────────────────────────
-    mark = DutyMark(
-        schedule_id=schedule_id,
-        person_id=payload.person_id,
-        duty_date=payload.duty_date,
-    )
-    db.add(mark)
+    # Для не-MARK_DUTY (отпуск/увольнение) не заполняем слоты автоматически
+    if mark_type != MARK_DUTY:
+        db.commit()
+        return {"action": "created", "mark_type": mark_type, "filled_slots_count": 0}
 
     # ── Автозаполнение — только слоты СВОЕГО управления ──────────────────────
     fill_count = 0

@@ -6,6 +6,11 @@
  */
 
 import { api }         from './api.js';
+import {
+    MARK_DUTY, MARK_LEAVE, MARK_VACATION, MARK_LETTER, MARK_LABEL,
+    getHolidaysMap, hoursForDate,
+    groupMarks, computeSummary, extractVacationRanges,
+} from './duty_calc.js';
 
 const esc = s => String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 
@@ -13,11 +18,14 @@ const esc = s => String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').repl
 
 let _schedules   = [];
 let _currentId   = null;
-let _persons     = [];   // люди в текущем графике
-let _marks       = {};   // "YYYY-MM-DD:person_id" → true
-let _positions   = [];   // для выбора при создании
+let _persons     = [];
+let _marks       = [];   // массив {person_id, duty_date, mark_type}
+let _positions   = [];
 let _viewYear    = new Date().getFullYear();
 let _viewMonth   = new Date().getMonth() + 1;
+let _holidays    = new Map();
+let _currentMode = MARK_DUTY;
+let _vacationStart = null;
 
 // ─── Инициализация ────────────────────────────────────────────────────────────
 
@@ -279,11 +287,15 @@ function _changeMonth(delta) {
 async function _loadMarksAndRender() {
     if (!_currentId) return;
     try {
-        const raw = await api.get(`/dept/schedules/${_currentId}/marks?year=${_viewYear}&month=${_viewMonth}`);
-        _marks = {};
-        raw.forEach(m => { _marks[`${m.duty_date}:${m.person_id}`] = true; });
+        const [raw, holidays] = await Promise.all([
+            api.get(`/dept/schedules/${_currentId}/marks?year=${_viewYear}&month=${_viewMonth}`),
+            getHolidaysMap(_viewYear),
+        ]);
+        _marks    = raw || [];
+        _holidays = holidays;
     } catch {
-        _marks = {};
+        _marks = [];
+        _holidays = new Map();
     }
     _renderGrid();
 }
@@ -293,97 +305,222 @@ function _renderGrid() {
     const table = document.getElementById('dept-duty-grid-table');
     if (!label || !table) return;
 
+    _renderModeSwitcher();
+
     const monthNames = ['Январь','Февраль','Март','Апрель','Май','Июнь',
                         'Июль','Август','Сентябрь','Октябрь','Ноябрь','Декабрь'];
     label.textContent = `${monthNames[_viewMonth - 1]} ${_viewYear}`;
 
     const daysInMonth = new Date(_viewYear, _viewMonth, 0).getDate();
     const today = new Date().toISOString().slice(0, 10);
-    const days = Array.from({ length: daysInMonth }, (_, i) => {
+    const monthDays = Array.from({ length: daysInMonth }, (_, i) => {
         const d = String(i + 1).padStart(2, '0');
         const m = String(_viewMonth).padStart(2, '0');
         return `${_viewYear}-${m}-${d}`;
     });
 
-    // Заголовок — дни
+    const DAY_ABBR = ['Вс','Пн','Вт','Ср','Чт','Пт','Сб'];
+    const marksByPerson = groupMarks(_marks);
+
+    // Заголовок
     const thead = `<thead><tr>
-        <th style="min-width:140px; text-align:left; padding:6px 8px; font-size:0.75rem;">Сотрудник</th>
-        ${days.map(d => {
-            const day = parseInt(d.slice(8));
-            const dow = new Date(d).getDay();
-            const isWeekend = dow === 0 || dow === 6;
-            const isToday = d === today;
-            return `<th style="min-width:32px; text-align:center; padding:4px 2px; font-size:0.7rem;
-                ${isToday ? 'background:var(--md-primary-light); color:var(--md-primary);' : ''}
-                ${isWeekend ? 'color:var(--md-error);' : ''}">
-                ${day}
+        <th class="duty-grid__name-hdr" style="min-width:180px; text-align:left;">Сотрудник</th>
+        ${monthDays.map(iso => {
+            const day = parseInt(iso.slice(8));
+            const dow = new Date(iso + 'T00:00:00').getDay();
+            const isWk = dow === 0 || dow === 6;
+            const holi = _holidays.get(iso);
+            const isToday = iso === today;
+            const cls = [
+                isWk    ? 'duty-col--weekend' : '',
+                holi    ? 'duty-col--holiday' : '',
+                isToday ? 'duty-grid__day-hdr--today' : '',
+            ].filter(Boolean).join(' ');
+            const ttl = holi ? `${DAY_ABBR[dow]} — ${esc(holi.title)}` : DAY_ABBR[dow];
+            return `<th class="${cls}" title="${ttl}" style="min-width:32px; text-align:center; padding:4px 2px; font-size:0.72rem;">
+                ${day}<span class="duty-dow">${DAY_ABBR[dow]}</span>
             </th>`;
         }).join('')}
+        <th class="duty-summary-th" title="Кол-во нарядов">Н</th>
+        <th class="duty-summary-th" title="Часы переработки">Часы</th>
+        <th class="duty-summary-th" title="Увольнения/Отпуск">У/О</th>
         <th style="width:32px;"></th>
     </tr></thead>`;
 
-    // Строки — люди
-    const tbody = `<tbody>${_persons.map(p => `
-        <tr>
-            <td style="font-size:0.8rem; padding:4px 8px; white-space:nowrap;">
+    // Строки
+    const tbody = `<tbody>${_persons.map(p => {
+        const personMarks = marksByPerson.get(p.person_id) || new Map();
+        const vacRanges   = extractVacationRanges(personMarks, monthDays);
+        const vacMap = new Map();
+        for (const r of vacRanges) {
+            const s = monthDays.indexOf(r.start_iso);
+            const e = monthDays.indexOf(r.end_iso);
+            for (let i = s; i <= e; i++) {
+                vacMap.set(monthDays[i], { isFirst: i === s, length: r.days });
+            }
+        }
+
+        const cells = monthDays.map(iso => {
+            const dow = new Date(iso + 'T00:00:00').getDay();
+            const isWk = dow === 0 || dow === 6;
+            const holi = _holidays.get(iso);
+            const isToday = iso === today;
+            const mark = personMarks.get(iso);
+            const vac  = vacMap.get(iso);
+            const cls = [
+                'duty-grid__cell',
+                isWk ? 'duty-col--weekend' : '',
+                holi ? 'duty-col--holiday' : '',
+                isToday ? 'duty-grid__cell--today' : '',
+                vac  ? 'duty-cell--in-vacation' : '',
+            ].filter(Boolean).join(' ');
+
+            let inner = '';
+            if (vac) {
+                if (vac.isFirst) {
+                    inner = `<div class="duty-vacation-bar"
+                                  style="width: calc(${vac.length * 100}% + ${vac.length - 1}px);"
+                                  title="Отпуск: ${vac.length} дн.">ОТПУСК</div>`;
+                }
+            } else if (mark) {
+                inner = `<span class="duty-mark duty-mark--${mark.mark_type}"
+                               title="${MARK_LABEL[mark.mark_type] || ''}">${MARK_LETTER[mark.mark_type] || ''}</span>`;
+            }
+
+            return `<td class="${cls}" data-date="${iso}" data-pid="${p.person_id}"
+                        style="text-align:center; padding:2px; position:relative;">
+                ${inner}
+            </td>`;
+        }).join('');
+
+        const sum = computeSummary(personMarks, _holidays);
+
+        return `<tr>
+            <td class="duty-name-td" style="font-size:0.82rem; padding:4px 8px; white-space:nowrap;">
                 ${esc(p.full_name)}
                 ${p.rank ? `<span style="color:var(--md-on-surface-hint); font-size:0.7rem;"> ${esc(p.rank)}</span>` : ''}
             </td>
-            ${days.map(d => {
-                const key     = `${d}:${p.person_id}`;
-                const marked  = _marks[key] ? ' duty-cell--marked' : '';
-                const isToday = d === today ? ' duty-cell--today' : '';
-                return `<td class="duty-cell${marked}${isToday}"
-                            data-date="${d}" data-pid="${p.person_id}"
-                            style="text-align:center; cursor:pointer; padding:2px;">
-                    ${_marks[key] ? '●' : ''}
-                </td>`;
-            }).join('')}
+            ${cells}
+            <td class="duty-summary-td"><span class="duty-summary-td__num duty-summary-td__num--duty">${sum.duty}</span></td>
+            <td class="duty-summary-td"><span class="duty-summary-td__num duty-summary-td__num--hours">${sum.overtime}</span></td>
+            <td class="duty-summary-td"><span class="duty-summary-td__num">${sum.leave}/${sum.vacation}</span></td>
             <td style="text-align:center;">
                 <button class="btn btn-danger btn-xs dept-duty-remove-person"
                         data-pid="${p.person_id}" type="button" title="Убрать из графика">✕</button>
             </td>
-        </tr>
-    `).join('')}
-    ${_persons.length === 0 ? `<tr><td colspan="${daysInMonth + 2}" style="padding:24px; text-align:center; color:var(--md-on-surface-hint); font-size:0.85rem;">
+        </tr>`;
+    }).join('')}
+    ${_persons.length === 0 ? `<tr><td colspan="${daysInMonth + 5}" style="padding:24px; text-align:center; color:var(--md-on-surface-hint); font-size:0.85rem;">
         Добавьте сотрудников через кнопку «+ Добавить человека»
     </td></tr>` : ''}
     </tbody>`;
 
     table.innerHTML = thead + tbody;
+    table.className = 'duty-grid';
 
-    // Клик по ячейке → toggle mark
-    table.querySelectorAll('.duty-cell').forEach(cell => {
+    table.querySelectorAll('.duty-grid__cell').forEach(cell => {
         cell.addEventListener('click', () => {
-            _toggleMark(cell.dataset.date, parseInt(cell.dataset.pid));
+            _onCellClick(cell.dataset.date, parseInt(cell.dataset.pid), cell);
         });
     });
-
-    // Удалить из графика
     table.querySelectorAll('.dept-duty-remove-person').forEach(btn => {
         btn.addEventListener('click', () => _removePerson(parseInt(btn.dataset.pid)));
     });
 }
 
-async function _toggleMark(date, personId) {
+function _renderModeSwitcher() {
+    const toolbar = document.querySelector('#dept-duty-grid-container .duty-grid-toolbar');
+    if (!toolbar) return;
+    if (toolbar.querySelector('.duty-mode-group')) return;
+    const group = document.createElement('div');
+    group.className = 'duty-mode-group';
+    group.innerHTML = `
+        <button class="duty-mode-btn ${_currentMode === MARK_DUTY     ? 'active' : ''}" data-mark="N" type="button">
+            <span class="duty-mode-btn__letter" data-letter="Н"></span>Наряд
+        </button>
+        <button class="duty-mode-btn ${_currentMode === MARK_LEAVE    ? 'active' : ''}" data-mark="U" type="button">
+            <span class="duty-mode-btn__letter" data-letter="У"></span>Увольнение
+        </button>
+        <button class="duty-mode-btn ${_currentMode === MARK_VACATION ? 'active' : ''}" data-mark="V" type="button">
+            <span class="duty-mode-btn__letter" data-letter="О"></span>Отпуск
+        </button>
+    `;
+    group.addEventListener('click', (e) => {
+        const b = e.target.closest('[data-mark]');
+        if (!b) return;
+        _currentMode   = b.dataset.mark;
+        _vacationStart = null;
+        group.querySelectorAll('.duty-mode-btn').forEach(x => x.classList.remove('active'));
+        b.classList.add('active');
+        if (_currentMode === MARK_VACATION) {
+            window.showSnackbar?.('Режим «Отпуск»: кликните первую и последнюю дату диапазона', 'info');
+        }
+    });
+    toolbar.insertBefore(group, toolbar.firstChild);
+}
+
+async function _onCellClick(date, personId, cellEl) {
+    if (_currentMode === MARK_VACATION) {
+        if (_vacationStart && _vacationStart.personId === personId) {
+            const startDate = _vacationStart.date <= date ? _vacationStart.date : date;
+            const endDate   = _vacationStart.date <= date ? date : _vacationStart.date;
+            _vacationStart = null;
+            await _applyVacationRange(personId, startDate, endDate);
+            return;
+        }
+        _vacationStart = { personId, date };
+        cellEl.style.outline = '2px dashed #059669';
+        window.showSnackbar?.(`Начало: ${date}. Кликните на конец диапазона.`, 'info');
+        return;
+    }
+    await _toggleMark(date, personId, _currentMode);
+}
+
+async function _applyVacationRange(personId, startIso, endIso) {
+    const s = new Date(startIso + 'T00:00:00');
+    const e = new Date(endIso   + 'T00:00:00');
+    const ops = [];
+    const cur = new Date(s);
+    while (cur <= e) {
+        const iso = `${cur.getFullYear()}-${String(cur.getMonth()+1).padStart(2,'0')}-${String(cur.getDate()).padStart(2,'0')}`;
+        const existing = _marks.find(m => m.person_id === personId && m.duty_date === iso);
+        if (!existing || existing.mark_type !== MARK_VACATION) ops.push(iso);
+        cur.setDate(cur.getDate() + 1);
+    }
+    try {
+        for (const iso of ops) {
+            await api.post(`/dept/schedules/${_currentId}/marks`, {
+                person_id: personId, duty_date: iso, mark_type: MARK_VACATION,
+            });
+        }
+        await _loadMarksAndRender();
+        window.showSnackbar?.(`Отпуск поставлен (${ops.length} дн.)`, 'success');
+    } catch (err) {
+        window.showSnackbar?.('Ошибка постановки отпуска', 'error');
+        await _loadMarksAndRender();
+    }
+}
+
+async function _toggleMark(date, personId, markType = MARK_DUTY) {
     if (!_currentId) return;
     try {
         const result = await api.post(`/dept/schedules/${_currentId}/marks`, {
             person_id: personId,
             duty_date: date,
+            mark_type: markType,
         });
-        // Обновляем локальный кеш
-        const key = `${date}:${personId}`;
+        // Обновляем локальный массив
         if (result.action === 'removed') {
-            delete _marks[key];
+            _marks = _marks.filter(m => !(m.person_id === personId && m.duty_date === date));
+        } else if (result.action === 'changed') {
+            const idx = _marks.findIndex(m => m.person_id === personId && m.duty_date === date);
+            if (idx !== -1) _marks[idx].mark_type = result.mark_type || markType;
         } else {
-            _marks[key] = true;
-            if (result.filled_slots_count > 0) {
-                window.showSnackbar?.(
-                    `Автозаполнено ${result.filled_slots_count} слот(ов) в списках`,
-                    'success'
-                );
-            }
+            _marks.push({ person_id: personId, duty_date: date, mark_type: result.mark_type || markType });
+        }
+        if (result.filled_slots_count > 0) {
+            window.showSnackbar?.(
+                `Автозаполнено ${result.filled_slots_count} слот(ов)`, 'success');
         }
         _renderGrid();
     } catch (err) {
