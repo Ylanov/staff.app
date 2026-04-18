@@ -6,6 +6,7 @@
     <meta name="theme-color" content="#4a7c6f">
     <title>Штабная Платформа</title>
     <link rel="stylesheet" href="/static/style.css">
+    <link rel="stylesheet" href="/static/users-v2.css">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@300;400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
@@ -862,60 +863,153 @@
             </div><!-- /#tab-history -->
 
             <!-- ══════════════════════════════════════════════════════════════
-                 Tab: Пользователи
+                 Tab: Пользователи (переработан: статистика, поиск, фильтр,
+                 collapsible-форма, компактные карточки)
                  ══════════════════════════════════════════════════════════════ -->
             <div id="tab-users" class="hidden" role="tabpanel">
-                <div class="users-panel">
-                    <div class="users-panel__create">
-                        <p class="users-panel__create-title">Добавить пользователя</p>
-                        <div class="create-user-row">
+                <div class="users-v2">
+
+                    <!-- ── Статистика (4 мини-карточки) ──────────────────── -->
+                    <div class="users-v2__stats">
+                        <div class="users-v2__stat">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                 stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/>
+                                <circle cx="9" cy="7" r="4"/>
+                                <path d="M23 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/>
+                            </svg>
+                            <div>
+                                <div class="users-v2__stat-value" id="users-stat-total">—</div>
+                                <div class="users-v2__stat-label">Всего</div>
+                            </div>
+                        </div>
+                        <div class="users-v2__stat users-v2__stat--admin">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                 stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+                            </svg>
+                            <div>
+                                <div class="users-v2__stat-value" id="users-stat-admins">—</div>
+                                <div class="users-v2__stat-label">Админов</div>
+                            </div>
+                        </div>
+                        <div class="users-v2__stat users-v2__stat--dept">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                 stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                <path d="M3 21h18M6 21V9l6-4 6 4v12"/>
+                                <path d="M10 21v-6h4v6"/>
+                            </svg>
+                            <div>
+                                <div class="users-v2__stat-value" id="users-stat-depts">—</div>
+                                <div class="users-v2__stat-label">Управлений</div>
+                            </div>
+                        </div>
+                        <div class="users-v2__stat users-v2__stat--active">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                 stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/>
+                                <polyline points="22 4 12 14.01 9 11.01"/>
+                            </svg>
+                            <div>
+                                <div class="users-v2__stat-value" id="users-stat-active">—</div>
+                                <div class="users-v2__stat-label">Активны</div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- ── Тулбар: поиск + фильтр + кнопка "Добавить" ───── -->
+                    <div class="users-v2__toolbar">
+                        <div class="users-v2__search">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                 stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                <circle cx="11" cy="11" r="8"/>
+                                <path d="M21 21l-4.35-4.35"/>
+                            </svg>
+                            <input type="text" id="users-search"
+                                   placeholder="Поиск по логину…" autocomplete="off">
+                        </div>
+
+                        <div class="users-v2__filter-group">
+                            <button class="users-v2__filter-btn active" data-role-filter="all" type="button">Все</button>
+                            <button class="users-v2__filter-btn"        data-role-filter="admin" type="button">Админы</button>
+                            <button class="users-v2__filter-btn"        data-role-filter="department" type="button">Управления</button>
+                        </div>
+
+                        <button id="users-v2-toggle-create" class="btn btn-success btn-sm" type="button">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                 stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"
+                                 style="margin-right:4px;">
+                                <path d="M12 5v14M5 12h14"/>
+                            </svg>
+                            Добавить пользователя
+                        </button>
+                    </div>
+
+                    <!-- ── Форма создания (collapsible) ─────────────────── -->
+                    <div id="users-v2-create-form" class="users-v2__create hidden">
+                        <div class="users-v2__create-grid">
                             <div class="field">
                                 <label class="field-label" for="new-username">Логин</label>
                                 <input type="text" id="new-username" placeholder="upr_1" autocomplete="off">
                             </div>
                             <div class="field">
                                 <label class="field-label" for="new-password">Пароль</label>
-                                <input type="text" id="new-password" placeholder="Минимум 10 символов, буква+цифра"
+                                <input type="text" id="new-password"
+                                       placeholder="Мин. 10 симв., буква + цифра"
                                        autocomplete="new-password">
                             </div>
-                            <div class="field field--role">
+                            <div class="field">
                                 <label class="field-label" for="new-role">Роль</label>
                                 <select id="new-role">
                                     <option value="department">Управление</option>
                                     <option value="admin">Администратор</option>
                                 </select>
                             </div>
-                            <button id="create-user-btn" class="btn btn-success btn-sm"
-                                    style="margin-top:18px; flex-shrink:0;" type="button">
-                                Добавить
-                            </button>
                         </div>
-                        <!-- Чекбоксы доступных вкладок (только для role=department) -->
-                        <div id="new-user-perms-block" style="margin-top:14px;">
-                            <p class="field-label" style="margin-bottom:6px;">Доступные вкладки:</p>
-                            <div id="new-user-perms" class="perms-checkboxes"
-                                 style="display:flex; flex-wrap:wrap; gap:12px 20px;">
-                                <!-- Генерится JS из admin.js:renderPermsCheckboxes -->
+
+                        <div id="new-user-perms-block" class="users-v2__perms-block">
+                            <div class="users-v2__perms-header">
+                                <span class="field-label">Доступные вкладки</span>
+                                <button id="users-v2-perms-all"  class="users-v2__perms-quick" type="button">Все</button>
+                                <button id="users-v2-perms-none" class="users-v2__perms-quick" type="button">Ничего</button>
                             </div>
-                            <p class="hint" style="margin-top:6px; font-size:0.78rem; color:var(--md-on-surface-hint);">
-                                Для роли «Администратор» эти настройки игнорируются — он всегда видит всё.
+                            <div id="new-user-perms" class="users-v2__perms-chips">
+                                <!-- Чипы генерятся в admin.js:renderPermsCheckboxes -->
+                            </div>
+                            <p class="hint users-v2__perms-hint">
+                                Для роли «Администратор» игнорируется — он всегда видит всё.
                             </p>
                         </div>
+
+                        <div class="users-v2__create-actions">
+                            <button id="users-v2-cancel-create" class="btn btn-outlined btn-sm" type="button">Отмена</button>
+                            <button id="create-user-btn" class="btn btn-success btn-sm" type="button">
+                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                     stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"
+                                     style="margin-right:4px;">
+                                    <polyline points="20 6 9 17 4 12"/>
+                                </svg>
+                                Создать
+                            </button>
+                        </div>
                     </div>
-                    <div class="data-table-wrap">
-                        <table>
-                            <thead>
-                                <tr>
-                                    <th style="width:56px;">ID</th>
-                                    <th>Пользователь</th>
-                                    <th style="width:130px;">Роль</th>
-                                    <th style="min-width:280px;">Доступные вкладки</th>
-                                    <th style="width:140px;"></th>
-                                </tr>
-                            </thead>
-                            <tbody id="users-tbody"></tbody>
-                        </table>
+
+                    <!-- ── Список пользователей (карточки) ──────────────── -->
+                    <div id="users-v2-list" class="users-v2__list"></div>
+
+                    <!-- Пустое состояние (после фильтра) -->
+                    <div id="users-v2-empty" class="users-v2__empty hidden">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                             stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">
+                            <circle cx="11" cy="11" r="8"/>
+                            <path d="M21 21l-4.35-4.35"/>
+                        </svg>
+                        <p>Никого не найдено</p>
+                        <span>Попробуйте изменить запрос или фильтр</span>
                     </div>
+
+                    <!-- Скрытый tbody для обратной совместимости -->
+                    <tbody id="users-tbody" class="hidden" style="display:none;"></tbody>
                 </div>
             </div><!-- /#tab-users -->
 

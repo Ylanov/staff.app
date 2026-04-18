@@ -703,39 +703,72 @@ async function _saveColumnConfig() {
 
 function _closeColumnModal() { el('col-editor-modal')?.remove(); }
 
-// ─── Управление пользователями ────────────────────────────────────────────────
+// ─── Управление пользователями (users-v2 — карточки + чипы + поиск) ──────────
 
-// Доступные вкладки — совпадает с AVAILABLE_PERMISSIONS на бэке (user.py).
-// Если добавляете новую вкладку: правите этот массив + AVAILABLE_PERMISSIONS
-// в Python-модели, плюс добавляете ID кнопки в app.js/_applyPermissionsToTabs.
+// Каталог вкладок. Иконки inline-SVG для отображения в permission-чипах.
+// При добавлении новой вкладки: добавь сюда + в AVAILABLE_PERMISSIONS
+// (app/models/user.py) + в app.js:PERM_TAB_MAP (скрытие у пользователя).
 const ALL_PERMISSIONS = [
-    { key: 'lists',   label: 'Списки',          hint: 'рабочие списки слотов' },
-    { key: 'duty',    label: 'Графики нарядов', hint: 'личные графики суточного наряда' },
-    { key: 'combat',  label: 'Боевой расчёт',   hint: 'заполнение боевых расчётов' },
-    { key: 'tasks',   label: 'Календарь',       hint: 'личные задачи и планы' },
-    { key: 'persons', label: 'База людей',      hint: 'общий справочник людей' },
+    {
+        key: 'lists',   label: 'Списки',          hint: 'Рабочие списки слотов',
+        icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>',
+    },
+    {
+        key: 'duty',    label: 'Графики нарядов', hint: 'Личные графики суточного наряда',
+        icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>',
+    },
+    {
+        key: 'combat',  label: 'Боевой расчёт',   hint: 'Заполнение боевых расчётов',
+        icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>',
+    },
+    {
+        key: 'tasks',   label: 'Календарь',       hint: 'Личные задачи и планы',
+        icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/><path d="M9 16l2 2 4-4"/></svg>',
+    },
+    {
+        key: 'persons', label: 'База людей',      hint: 'Общий справочник людей',
+        icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/></svg>',
+    },
 ];
 
-// Инициализирует чекбоксы вкладок в форме создания нового пользователя.
-// По умолчанию все отмечены (дефолт бэка).
+// Локальный кеш для клиент-сайд фильтрации (не дёргать API на каждое keypress)
+let _usersCache   = [];
+let _usersFilter  = 'all';   // 'all' | 'admin' | 'department'
+let _usersQuery   = '';
+let _usersSearchTimer = null;
+
+// Рендер чипов — и в форме создания, и в модалке редактирования
 export function renderPermsCheckboxes(selected = null, containerId = 'new-user-perms') {
     const container = document.getElementById(containerId);
     if (!container) return;
     const active = selected === null
         ? new Set(ALL_PERMISSIONS.map(p => p.key))
         : new Set(selected || []);
+
     container.innerHTML = ALL_PERMISSIONS.map(p => `
-        <label style="display:flex; align-items:center; gap:6px; cursor:pointer; font-size:0.88rem;"
-               title="${esc(p.hint)}">
+        <label class="users-v2__perm-chip ${active.has(p.key) ? 'active' : ''}"
+               data-perm="${p.key}" title="${esc(p.hint)}">
             <input type="checkbox" class="perm-checkbox"
                    data-perm="${p.key}"
                    ${active.has(p.key) ? 'checked' : ''}>
+            ${p.icon}
             ${esc(p.label)}
         </label>
     `).join('');
+
+    // Toggle-поведение: клик по chip переключает состояние
+    container.querySelectorAll('.users-v2__perm-chip').forEach(chip => {
+        chip.addEventListener('click', (e) => {
+            // preventDefault — клик по label сам переключит input, но мы
+            // управляем `active` классом вручную для мгновенного фидбека
+            e.preventDefault();
+            const cb = chip.querySelector('.perm-checkbox');
+            cb.checked = !cb.checked;
+            chip.classList.toggle('active', cb.checked);
+        });
+    });
 }
 
-// Читает чекбоксы и возвращает массив выбранных ключей.
 function collectCheckedPerms(containerId = 'new-user-perms') {
     const container = document.getElementById(containerId);
     if (!container) return null;
@@ -744,119 +777,233 @@ function collectCheckedPerms(containerId = 'new-user-perms') {
         .map(cb => cb.dataset.perm);
 }
 
-// Прячет блок permissions когда роль=admin (ему permissions неактуальны)
+// Для роли 'admin' permissions неактуальны → прячем весь блок
 function _togglePermsBlock() {
     const role  = el('new-role')?.value;
     const block = document.getElementById('new-user-perms-block');
     if (block) block.style.display = role === 'admin' ? 'none' : '';
 }
 
-function _permsBadges(perms) {
-    // Компактное отображение в таблице: цветные badge'и или «все» если полный набор
-    const p = Array.isArray(perms) ? perms : [];
-    if (p.length === ALL_PERMISSIONS.length) {
-        return `<span class="role-badge" style="background:var(--md-success-light, #e9f7ef); color:var(--md-success, #1e8e3e); border-color:#c7e7ce;">все вкладки</span>`;
+// Получить инициалы для аватарки (первые буквы слов)
+function _initials(name) {
+    const parts = (name || '?').trim().split(/\s+/).filter(Boolean);
+    if (parts.length === 0) return '?';
+    if (parts.length === 1) return parts[0].slice(0, 2);
+    return (parts[0][0] + parts[parts.length - 1][0]);
+}
+
+// Рендер permission-иконок на карточке пользователя
+function _cardPermsHtml(user) {
+    if (user.role === 'admin') {
+        return `<span class="users-v2__perm-icon users-v2__perm-icon--admin-all" title="Полный доступ">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+            все вкладки
+        </span>`;
     }
+    const p = Array.isArray(user.permissions) ? user.permissions : [];
     if (p.length === 0) {
-        return `<span class="role-badge" style="background:var(--md-warning-light, #fcf3e6); color:var(--md-warning, #b45309); border-color:#f0d9b8;">нет доступа</span>`;
+        return `<span class="users-v2__perm-icon users-v2__perm-icon--none" title="Нет доступа ни к одной вкладке">
+            нет доступа
+        </span>`;
     }
     return p.map(key => {
         const def = ALL_PERMISSIONS.find(x => x.key === key);
-        return `<span class="role-badge" style="margin-right:4px; margin-bottom:2px;">${esc(def?.label || key)}</span>`;
+        if (!def) return '';
+        return `<span class="users-v2__perm-icon" title="${esc(def.hint)}">
+            ${def.icon}${esc(def.label)}
+        </span>`;
     }).join('');
+}
+
+// Рендер одной карточки
+function _renderUserCard(user) {
+    const isAdmin     = user.role === 'admin';
+    const isProtected = user.username === 'admin';
+    const isInactive  = !user.is_active;
+
+    const avatarClass = isAdmin ? 'users-v2__avatar--admin' : 'users-v2__avatar--dept';
+    const roleClass   = isAdmin ? 'users-v2__card-role--admin' : 'users-v2__card-role--dept';
+    const cardMods    = [
+        isAdmin     ? 'users-v2__card--admin'    : '',
+        isInactive  ? 'users-v2__card--inactive' : '',
+    ].filter(Boolean).join(' ');
+
+    const editBtn = isProtected || isAdmin
+        ? `<button class="users-v2__icon-btn users-v2__icon-btn--protected"
+                   title="${isAdmin ? 'У администратора полный доступ всегда' : 'Нельзя редактировать главного администратора'}" disabled>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+           </button>`
+        : `<button class="users-v2__icon-btn" data-edit-perms="${user.id}" title="Настроить доступные вкладки">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+           </button>`;
+
+    const delBtn = isProtected
+        ? `<button class="users-v2__icon-btn users-v2__icon-btn--protected" title="Главный администратор — защищён от удаления" disabled>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+           </button>`
+        : `<button class="users-v2__icon-btn users-v2__icon-btn--danger" data-delete-id="${user.id}" title="Удалить пользователя">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2v2"/></svg>
+           </button>`;
+
+    return `
+        <div class="users-v2__card ${cardMods}" data-user-id="${user.id}">
+            <div class="users-v2__card-head">
+                <div class="users-v2__avatar ${avatarClass}">${esc(_initials(formatRole(user.username)))}</div>
+                <div class="users-v2__card-info">
+                    <div class="users-v2__card-name">${esc(formatRole(user.username))}</div>
+                    <div class="users-v2__card-login">@${esc(user.username)}${isInactive ? ' · деактивирован' : ''}</div>
+                </div>
+                <span class="users-v2__card-role ${roleClass}">
+                    ${isAdmin ? 'Админ' : 'Управление'}
+                </span>
+            </div>
+            <div class="users-v2__card-perms">${_cardPermsHtml(user)}</div>
+            <div class="users-v2__card-actions">${editBtn}${delBtn}</div>
+        </div>
+    `;
+}
+
+// Применяет текущие _usersFilter / _usersQuery к _usersCache и рендерит
+function _renderUsersList() {
+    const list  = document.getElementById('users-v2-list');
+    const empty = document.getElementById('users-v2-empty');
+    if (!list) return;
+
+    const q = _usersQuery.toLowerCase();
+    let items = _usersCache;
+
+    if (_usersFilter !== 'all') {
+        items = items.filter(u => u.role === _usersFilter);
+    }
+    if (q) {
+        items = items.filter(u =>
+            (u.username || '').toLowerCase().includes(q)
+            || formatRole(u.username).toLowerCase().includes(q)
+        );
+    }
+
+    if (items.length === 0) {
+        list.innerHTML = '';
+        empty?.classList.remove('hidden');
+        return;
+    }
+    empty?.classList.add('hidden');
+
+    // Сортировка: admin первым, потом по алфавиту
+    items = [...items].sort((a, b) => {
+        if (a.role !== b.role) return a.role === 'admin' ? -1 : 1;
+        return (a.username || '').localeCompare(b.username || '', 'ru');
+    });
+
+    list.innerHTML = items.map(_renderUserCard).join('');
+
+    // Делегирование: Настроить / Удалить
+    list.querySelectorAll('[data-edit-perms]').forEach(btn => {
+        btn.addEventListener('click', () => {
+            const userId = parseInt(btn.dataset.editPerms, 10);
+            const user   = _usersCache.find(u => u.id === userId);
+            if (user) _openPermsModal(user);
+        });
+    });
+    list.querySelectorAll('[data-delete-id]').forEach(btn => {
+        btn.addEventListener('click', () => {
+            const userId = parseInt(btn.dataset.deleteId, 10);
+            deleteUser(userId);
+        });
+    });
+}
+
+// Обновление статистики (4 мини-карточки в шапке)
+function _renderUsersStats() {
+    const total   = _usersCache.length;
+    const admins  = _usersCache.filter(u => u.role === 'admin').length;
+    const depts   = _usersCache.filter(u => u.role === 'department').length;
+    const active  = _usersCache.filter(u => u.is_active).length;
+    const set = (id, v) => { const e = el(id); if (e) e.textContent = v; };
+    set('users-stat-total',  total);
+    set('users-stat-admins', admins);
+    set('users-stat-depts',  depts);
+    set('users-stat-active', active);
 }
 
 export async function loadUsers() {
     try {
         const users = await api.get('/admin/users');
 
-        availableDepartments = users.filter(u => u.is_active).map(u => u.username);
-        window.availableRoles = users.map(u => u.username);
+        availableDepartments   = users.filter(u => u.is_active).map(u => u.username);
+        window.availableRoles  = users.map(u => u.username);
 
-        el('users-tbody').innerHTML = users.map(u => {
-            const roleBadge = u.role === 'admin'
-                ? `<span class="role-badge role-badge--admin">Администратор</span>`
-                : `<span class="role-badge role-badge--department">Управление</span>`;
-
-            const statusBadge = u.is_active ? '' :
-                `<span class="role-badge" style="background:var(--md-warning-light); color:var(--md-warning); border-color:#f0d9b8; margin-left:6px;">Деактивирован</span>`;
-
-            // Столбец permissions: для admin всегда «все», для department — бейджи
-            const permsCell = u.role === 'admin'
-                ? `<span class="role-badge" style="background:var(--md-primary-container, #e3f2fd); color:var(--md-on-primary-container, #0d47a1);">все (admin)</span>`
-                : _permsBadges(u.permissions);
-
-            // Действия: Настроить доступ (только department) + Удалить (не admin)
-            const canEditPerms = u.role !== 'admin' && u.username !== 'admin';
-            const editBtn = canEditPerms
-                ? `<button class="btn btn-outlined btn-xs" data-edit-perms="${u.id}" data-username="${esc(u.username)}" title="Изменить вкладки">Доступ</button>`
-                : '';
-            const delBtn = u.username === 'admin'
-                ? `<span style="font-size:0.75rem; color:var(--md-on-surface-hint);">Защищён</span>`
-                : `<button class="btn btn-danger btn-xs" onclick="window.app.deleteUser(${u.id})">Удалить</button>`;
-
-            return `
-                <tr data-user-id="${u.id}">
-                    <td style="font-family:var(--md-font-mono); font-size:0.72rem; color:var(--md-on-surface-hint);">${u.id}</td>
-                    <td>
-                        <strong>${esc(formatRole(u.username))}</strong>
-                        <span style="font-size:0.75rem; color:var(--md-on-surface-hint); margin-left:4px;">(${esc(u.username)})</span>
-                        ${statusBadge}
-                    </td>
-                    <td>${roleBadge}</td>
-                    <td>${permsCell}</td>
-                    <td style="display:flex; gap:6px; flex-wrap:wrap;">${editBtn}${delBtn}</td>
-                </tr>`;
-        }).join('');
-
-        // Вешаем обработчик «Доступ» — открывает модалку
-        el('users-tbody').querySelectorAll('[data-edit-perms]').forEach(btn => {
-            btn.addEventListener('click', () => {
-                const userId   = parseInt(btn.dataset.editPerms, 10);
-                const username = btn.dataset.username;
-                const user = users.find(u => u.id === userId);
-                if (user) _openPermsModal(user);
-            });
-        });
-    } catch (e) { console.error('loadUsers:', e); showError('Не удалось загрузить пользователей'); }
+        _usersCache = users;
+        _renderUsersStats();
+        _renderUsersList();
+    } catch (e) {
+        console.error('loadUsers:', e);
+        showError('Не удалось загрузить пользователей');
+    }
 }
 
+// Модалка "Настроить доступ" — чипы permissions
 function _openPermsModal(user) {
-    // Модалка выбора permissions для существующего пользователя.
-    // Рендерим прямо в body — никаких фреймворков, простой backdrop.
     const existing = document.getElementById('perms-modal');
     if (existing) existing.remove();
 
     const modal = document.createElement('div');
     modal.id = 'perms-modal';
     modal.style.cssText = `
-        position:fixed; inset:0; z-index:9999; background:rgba(0,0,0,0.4);
+        position:fixed; inset:0; z-index:9999; background:rgba(0,0,0,0.45);
         display:flex; align-items:center; justify-content:center; padding:20px;
+        animation: users-v2-slide-in 0.15s ease-out;
     `;
     modal.innerHTML = `
-        <div style="background:var(--md-surface,#fff); border-radius:var(--md-radius-lg,12px);
-                    max-width:460px; width:100%; padding:20px;
-                    box-shadow:0 10px 40px rgba(0,0,0,0.15);">
-            <h3 style="margin:0 0 4px; font-size:1.05rem;">Доступные вкладки</h3>
-            <p style="margin:0 0 16px; font-size:0.82rem; color:var(--md-on-surface-hint);">
-                Пользователь: <strong>${esc(formatRole(user.username))}</strong>
+        <div style="background:var(--md-surface,#fff); border-radius:var(--md-radius-lg,14px);
+                    max-width:520px; width:100%; padding:22px;
+                    box-shadow:0 20px 60px rgba(0,0,0,0.2);">
+            <div style="display:flex; align-items:center; gap:12px; margin-bottom:6px;">
+                <div class="users-v2__avatar users-v2__avatar--dept"
+                     style="width:36px; height:36px; font-size:0.82rem;">
+                    ${esc(_initials(formatRole(user.username)))}
+                </div>
+                <div style="flex:1;">
+                    <h3 style="margin:0; font-size:1.02rem; font-weight:600;">
+                        ${esc(formatRole(user.username))}
+                    </h3>
+                    <p style="margin:2px 0 0; font-size:0.76rem; color:var(--md-on-surface-hint);
+                              font-family:var(--md-font-mono);">
+                        @${esc(user.username)}
+                    </p>
+                </div>
+            </div>
+            <p style="margin:12px 0 14px; font-size:0.84rem; color:var(--md-on-surface-variant);">
+                Отметьте вкладки, доступные этому пользователю.
+                Админ всегда видит всё.
             </p>
-            <div id="perms-modal-list" class="perms-checkboxes"
-                 style="display:flex; flex-direction:column; gap:10px;"></div>
-            <div style="display:flex; justify-content:flex-end; gap:8px; margin-top:18px;">
-                <button id="perms-modal-cancel" class="btn btn-outlined btn-sm" type="button">Отмена</button>
-                <button id="perms-modal-save"   class="btn btn-filled btn-sm"   type="button">Сохранить</button>
+            <div id="perms-modal-list" class="users-v2__perms-chips"
+                 style="margin-bottom:18px;"></div>
+            <div style="display:flex; justify-content:space-between; align-items:center; gap:8px;">
+                <div style="display:flex; gap:6px;">
+                    <button id="perms-modal-all"  class="users-v2__perms-quick" type="button">Все</button>
+                    <button id="perms-modal-none" class="users-v2__perms-quick" type="button">Ничего</button>
+                </div>
+                <div style="display:flex; gap:8px;">
+                    <button id="perms-modal-cancel" class="btn btn-outlined btn-sm" type="button">Отмена</button>
+                    <button id="perms-modal-save"   class="btn btn-success  btn-sm" type="button">Сохранить</button>
+                </div>
             </div>
         </div>
     `;
     document.body.appendChild(modal);
 
-    // Рендер чекбоксов с текущими значениями пользователя
     renderPermsCheckboxes(user.permissions || [], 'perms-modal-list');
 
-    // Закрытие по клику на backdrop
     modal.addEventListener('click', (e) => { if (e.target === modal) modal.remove(); });
     document.getElementById('perms-modal-cancel').addEventListener('click', () => modal.remove());
+
+    document.getElementById('perms-modal-all').addEventListener('click', () => {
+        renderPermsCheckboxes(ALL_PERMISSIONS.map(p => p.key), 'perms-modal-list');
+    });
+    document.getElementById('perms-modal-none').addEventListener('click', () => {
+        renderPermsCheckboxes([], 'perms-modal-list');
+    });
 
     document.getElementById('perms-modal-save').addEventListener('click', async () => {
         const perms = collectCheckedPerms('perms-modal-list');
@@ -878,8 +1025,6 @@ export async function handleCreateUser() {
     const role     = el('new-role')?.value;
     if (!username || !password) return showError('Заполните логин и пароль');
 
-    // Для department собираем permissions из чекбоксов; для admin — не передаём
-    // (бэк проставит дефолт).
     const payload = { username, password, role };
     if (role !== 'admin') {
         const perms = collectCheckedPerms();
@@ -893,8 +1038,8 @@ export async function handleCreateUser() {
         await api.post('/admin/users', payload);
         el('new-username').value = '';
         el('new-password').value = '';
-        // Сбрасываем чекбоксы на дефолт (все отмечены)
-        renderPermsCheckboxes();
+        renderPermsCheckboxes();            // сброс на "все"
+        _hideCreateForm();
         notify(`Пользователь «${username}» создан`);
         await loadUsers();
     } catch (e) {
@@ -907,19 +1052,67 @@ export async function handleCreateUser() {
 }
 
 export async function deleteUser(userId) {
-    if (!confirm('Удалить этого пользователя?')) return;
-    try { await api.delete(`/admin/users/${userId}`); notify('Пользователь удалён'); await loadUsers(); }
-    catch (e) {
+    const user = _usersCache.find(u => u.id === userId);
+    const label = user ? formatRole(user.username) : `#${userId}`;
+    if (!confirm(`Удалить пользователя «${label}»?`)) return;
+    try {
+        await api.delete(`/admin/users/${userId}`);
+        notify('Пользователь удалён');
+        await loadUsers();
+    } catch (e) {
         console.error('deleteUser:', e);
-        showError(e.status === 403 ? e.message ?? 'Удаление запрещено' : 'Ошибка удаления пользователя');
+        showError(e.status === 403 ? (e.message ?? 'Удаление запрещено') : 'Ошибка удаления пользователя');
     }
 }
 
-// Вешается один раз при инициализации админ-панели (через bindEvents)
+// ─── Форма создания: показ / скрытие ──────────────────────────────────────────
+function _showCreateForm() {
+    document.getElementById('users-v2-create-form')?.classList.remove('hidden');
+    setTimeout(() => el('new-username')?.focus(), 40);
+}
+function _hideCreateForm() {
+    document.getElementById('users-v2-create-form')?.classList.add('hidden');
+}
+
+// ─── Init: вешаем обработчики поиска / фильтра / формы ───────────────────────
 export function initUsersTab() {
     renderPermsCheckboxes();
     el('new-role')?.addEventListener('change', _togglePermsBlock);
     _togglePermsBlock();
+
+    // Показ формы
+    document.getElementById('users-v2-toggle-create')?.addEventListener('click', () => {
+        const form = document.getElementById('users-v2-create-form');
+        if (form?.classList.contains('hidden')) _showCreateForm(); else _hideCreateForm();
+    });
+    document.getElementById('users-v2-cancel-create')?.addEventListener('click', _hideCreateForm);
+
+    // Быстрое «Все / Ничего» в форме создания
+    document.getElementById('users-v2-perms-all')?.addEventListener('click', () => {
+        renderPermsCheckboxes(ALL_PERMISSIONS.map(p => p.key), 'new-user-perms');
+    });
+    document.getElementById('users-v2-perms-none')?.addEventListener('click', () => {
+        renderPermsCheckboxes([], 'new-user-perms');
+    });
+
+    // Поиск с debounce
+    document.getElementById('users-search')?.addEventListener('input', (e) => {
+        clearTimeout(_usersSearchTimer);
+        _usersSearchTimer = setTimeout(() => {
+            _usersQuery = e.target.value.trim();
+            _renderUsersList();
+        }, 220);
+    });
+
+    // Фильтр по роли
+    document.querySelectorAll('[data-role-filter]').forEach(btn => {
+        btn.addEventListener('click', () => {
+            document.querySelectorAll('[data-role-filter]').forEach(b => b.classList.remove('active'));
+            btn.classList.add('active');
+            _usersFilter = btn.dataset.roleFilter;
+            _renderUsersList();
+        });
+    });
 }
 
 // ─── Дежурный ─────────────────────────────────────────────────────────────────
