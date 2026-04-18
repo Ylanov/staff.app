@@ -3165,3 +3165,77 @@ tr:hover .duty-grid__remove-person {
     0%, 100% { opacity: 0.3; }
     50%       { opacity: 0.6; }
 }
+
+/* ─── Подсказки поиска ФИО из общей базы (persons/suggest) ──────────────── */
+
+.fio-suggest-box {
+    position: absolute;
+    top: 100%;
+    left: 0;
+    right: 0;
+    z-index: 1000;
+    background: var(--md-surface, #fff);
+    border: 1px solid var(--md-outline-variant, #ddd);
+    border-radius: var(--md-radius-md, 8px);
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.12);
+    max-height: 280px;
+    overflow-y: auto;
+    margin-top: 2px;
+}
+
+.fio-suggest-box.hidden { display: none; }
+
+.fio-suggest-item {
+    padding: 8px 12px;
+    cursor: pointer;
+    border-bottom: 1px solid var(--md-outline-variant, #eee);
+    transition: background 0.12s;
+}
+
+.fio-suggest-item:last-child { border-bottom: none; }
+
+.fio-suggest-item:hover {
+    background: var(--md-surface-variant, #f5f5f5);
+}
+
+.fio-suggest-line {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+}
+
+.fio-name {
+    font-weight: 500;
+    color: var(--md-on-surface, #222);
+}
+
+.fio-badge {
+    font-size: 0.72em;
+    padding: 2px 7px;
+    border-radius: 10px;
+    font-weight: 600;
+    white-space: nowrap;
+}
+
+.fio-badge-exact {
+    background: #4caf50;
+    color: #fff;
+}
+
+.fio-badge-score {
+    background: var(--md-primary-container, #e3f2fd);
+    color: var(--md-on-primary-container, #0d47a1);
+}
+
+.fio-dept {
+    font-size: 0.8em;
+    color: var(--md-on-surface-variant, #666);
+    font-style: italic;
+}
+
+.fio-suggest-extra {
+    font-size: 0.8em;
+    color: var(--md-on-surface-variant, #666);
+    margin-top: 2px;
+}

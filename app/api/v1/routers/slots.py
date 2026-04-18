@@ -5,16 +5,24 @@ from sqlalchemy.orm import Session, joinedload
 from typing import List
 from datetime import date as date_today
 from sqlalchemy import or_
+from pydantic import BaseModel
 
 from app.db.database import get_db
 from app.models.user import User
 from app.models.event import Slot, Event
+from app.models.person import Person
 from app.schemas.slot import SlotUpdate, SlotResponse
 from app.api.dependencies import get_current_user
 from app.core.websockets import manager
 from app.api.v1.routers.persons import upsert_person_from_slot
 
 router = APIRouter()
+
+
+class ApplyPersonPayload(BaseModel):
+    """Применить человека из общей базы к слоту."""
+    person_id: int
+    version:   int    # optimistic lock — тот же механизм что и в fill_slot
 
 
 @router.get("/events", summary="Получить все рабочие списки для выпадающих меню")
@@ -142,4 +150,87 @@ async def fill_slot(
 
     await manager.broadcast({"event_id": slot.group.event_id, "action": "update"})
 
+    return slot
+
+
+@router.post(
+    "/{slot_id}/apply-person",
+    response_model=SlotResponse,
+    summary="Применить человека из общей базы к своей строке",
+)
+async def apply_person_to_slot(
+        slot_id: int,
+        payload: ApplyPersonPayload,
+        db: Session = Depends(get_db),
+        current_user: User = Depends(get_current_user),
+):
+    """
+    Применить найденного (через /persons/suggest) человека к своему слоту.
+
+    Сценарий из ТЗ:
+      1. Пользователь управления upr_5 заполняет строку в таблице.
+      2. Вводит ФИО → фронт дёргает /persons/suggest → нашёл "Иванова"
+         которого ранее добавил upr_3.
+      3. Пользователь подтверждает выбор → фронт шлёт этот endpoint.
+      4. В слот копируются full_name/rank/doc_number из Person.
+      5. Стандартный upsert_person_from_slot (как и в fill_slot) обновляет
+         Person.department на upr_5 — "управление применяется к человеку"
+         как того требует бизнес-логика. Это та же функция что вызывается
+         при обычном заполнении через PATCH /slots/{id}, так что ЛОГИКА
+         СОХРАНЕНА: мы просто подставляем поля вместо ручного ввода.
+
+    Если человек новый (не нашёлся в общей базе) — фронт просто пользуется
+    обычным PATCH /slots/{id}, где upsert_person_from_slot создаст запись
+    в общей базе. Это тоже соответствует ТЗ ("добавляет человека в общую
+    базу и в базу пользователя").
+    """
+    slot = (
+        db.query(Slot)
+        .options(joinedload(Slot.group), joinedload(Slot.position))
+        .filter(Slot.id == slot_id)
+        .first()
+    )
+    if not slot:
+        raise HTTPException(status_code=404, detail="Строка не найдена")
+
+    # Тот же check что в fill_slot — только свои слоты, админ может всё
+    if current_user.role != "admin":
+        if not slot.department or slot.department != current_user.username:
+            raise HTTPException(
+                status_code=403,
+                detail="Доступ запрещён. Это не ваша строка.",
+            )
+
+    if slot.version != payload.version:
+        raise HTTPException(
+            status_code=409,
+            detail="Данные были изменены другим пользователем. "
+                   "Таблица обновится автоматически, проверьте данные.",
+        )
+
+    person = db.query(Person).filter(Person.id == payload.person_id).first()
+    if not person:
+        raise HTTPException(status_code=404, detail="Человек не найден в общей базе")
+
+    # Копируем ключевые поля из Person в Slot.
+    # Позиционные поля слота (position_id, department, callsign, note,
+    # extra_data) НЕ трогаем — они задаются админом при создании строки.
+    slot.full_name  = person.full_name
+    slot.rank       = person.rank       or slot.rank
+    slot.doc_number = person.doc_number or slot.doc_number
+    slot.version   += 1
+
+    # Обновляем общую базу — department становится текущим управлением.
+    # Это поведение совпадает с fill_slot (см. docstring upsert_person_from_slot).
+    upsert_person_from_slot(
+        db=db,
+        full_name=slot.full_name,
+        rank=slot.rank,
+        doc_number=slot.doc_number,
+        department=slot.department,
+    )
+
+    db.commit()
+    db.refresh(slot)
+    await manager.broadcast({"event_id": slot.group.event_id, "action": "update"})
     return slot

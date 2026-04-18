@@ -3,13 +3,16 @@
 import asyncio
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, WebSocket
+from fastapi import FastAPI, WebSocket, Request
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import RedirectResponse
+from fastapi.responses import RedirectResponse, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.exc import ProgrammingError, OperationalError
+from slowapi.errors import RateLimitExceeded
+from slowapi.middleware import SlowAPIMiddleware
 
 from app.core.config import settings
+from app.core.limiter import limiter
 from app.db.database import SessionLocal
 from app.api.v1.routers import auth, admin, slots, export, persons, duty
 from app.api.v1.routers import combat_calc
@@ -62,14 +65,37 @@ app = FastAPI(
 )
 
 
-# ─── CORS ─────────────────────────────────────────────────────────────────────
+# ─── Rate limiting ────────────────────────────────────────────────────────────
+# Глобальный лимитер (per-IP). Используется через app.state.limiter,
+# чтобы SlowAPIMiddleware и декораторы @limiter.limit(...) в роутерах
+# могли обращаться к одному инстансу.
+app.state.limiter = limiter
 
+
+@app.exception_handler(RateLimitExceeded)
+async def rate_limit_exceeded_handler(request: Request, exc: RateLimitExceeded):
+    # 429 Too Many Requests — стандартный ответ по RFC 6585.
+    # detail с понятной формулировкой, Retry-After добавляет SlowAPI.
+    return JSONResponse(
+        status_code=429,
+        content={"detail": f"Слишком много запросов. Повторите позже ({exc.detail})."},
+    )
+
+
+app.add_middleware(SlowAPIMiddleware)
+
+
+# ─── CORS ─────────────────────────────────────────────────────────────────────
+# ИСПРАВЛЕНО: раньше allow_methods/allow_headers=["*"] — слишком широко.
+# Теперь явный список методов которые реально используются API.
+# allow_headers включает Authorization (JWT), Content-Type, и всё что
+# фронт реально шлёт. Это снижает поверхность атаки через CORS-preflight.
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origins,
     allow_credentials=settings.cors_allow_credentials,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type", "X-Requested-With", "Accept"],
 )
 
 
