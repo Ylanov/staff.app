@@ -2,6 +2,7 @@
 
 import { api } from './api.js';
 import { showError, updateDeptCardProgress, formatRole } from './ui.js';
+import { attach as attachFio } from './fio_autocomplete.js';
 
 // ─── Состояние модуля ─────────────────────────────────────────────────────────
 let groupedData    = {};
@@ -117,6 +118,10 @@ function renderGroupTable(groupName) {
 
     const isAdmin = window.currentUserRole === 'admin';
 
+    // Уничтожаем предыдущие autocomplete-instance'ы до перезаписи innerHTML,
+    // иначе болтаются document-listener'ы.
+    tbody.querySelectorAll('input[data-fio-input]').forEach(i => i.__fioAc?.destroy());
+
     tbody.innerHTML = groupSlots.map(slot => `
         <tr data-slot-id="${slot.id}" data-version="${slot.version || 1}">
             <td>
@@ -125,8 +130,7 @@ function renderGroupTable(groupName) {
             </td>
             <td><input id="rank-${slot.id}" value="${esc(slot.rank)}" placeholder="Звание"></td>
             <td style="position:relative;">
-                <input id="name-${slot.id}" value="${esc(slot.full_name)}" placeholder="Фамилия Имя Отчество" autocomplete="off">
-                <div id="suggest-${slot.id}" class="fio-suggest-box hidden"></div>
+                <input id="name-${slot.id}" value="${esc(slot.full_name)}" placeholder="Фамилия Имя Отчество" autocomplete="off" data-fio-input="1">
             </td>
             <td><input id="doc-${slot.id}"  value="${esc(slot.doc_number)}" placeholder="Номер документа"></td>
             <td>${esc(slot.callsign || '-')}</td>
@@ -153,113 +157,32 @@ function renderGroupTable(groupName) {
         tableWrap.classList.remove('hidden');
     }
 
-    // Подключаем подсказку поиска из общей базы людей (см. persons/suggest).
-    // Debounce 350мс — не бомбим БД на каждый keystroke.
-    groupSlots.forEach(slot => attachFioSuggest(slot.id));
+    // Подключаем единый fio_autocomplete: при выборе вызываем
+    // /slots/{id}/apply-person — это dept-специфичная логика, сервер
+    // сам сохраняет slot (с проверкой version) и возвращает обновлённый.
+    groupSlots.forEach(slot => attachFioSuggestForSlot(slot.id));
 }
 
 // ─── Подсказки ФИО из общей базы ─────────────────────────────────────────────
 
-const _suggestTimers = new Map(); // slotId → timer
-
-function attachFioSuggest(slotId) {
+function attachFioSuggestForSlot(slotId) {
     const input = el(`name-${slotId}`);
-    const box   = el(`suggest-${slotId}`);
-    if (!input || !box) return;
+    if (!input) return;
 
-    input.addEventListener('input', () => {
-        const q = input.value.trim();
-        clearTimeout(_suggestTimers.get(slotId));
-
-        if (q.length < 2) {
-            box.classList.add('hidden');
-            box.innerHTML = '';
-            return;
-        }
-
-        const timer = setTimeout(() => fetchSuggestions(slotId, q), 350);
-        _suggestTimers.set(slotId, timer);
-    });
-
-    // Клик вне подсказки — скрываем
-    document.addEventListener('click', (e) => {
-        if (!box.contains(e.target) && e.target !== input) {
-            box.classList.add('hidden');
-        }
-    });
-
-    input.addEventListener('focus', () => {
-        if (box.innerHTML) box.classList.remove('hidden');
-    });
-}
-
-async function fetchSuggestions(slotId, fullName) {
-    const box = el(`suggest-${slotId}`);
-    if (!box) return;
-
-    const rank = el(`rank-${slotId}`)?.value?.trim() || '';
-    const doc  = el(`doc-${slotId}`)?.value?.trim()  || '';
-
-    const params = new URLSearchParams({ full_name: fullName });
-    if (rank) params.append('rank', rank);
-    if (doc)  params.append('doc_number', doc);
-
-    try {
-        const items = await api.get(`/persons/suggest?${params.toString()}`);
-        renderSuggestions(slotId, items);
-    } catch (e) {
-        // При 429 (rate limit) или сетевых — молча гасим, подсказки некритичны
-        box.classList.add('hidden');
-    }
-}
-
-function renderSuggestions(slotId, items) {
-    const box = el(`suggest-${slotId}`);
-    if (!box) return;
-
-    if (!items || items.length === 0) {
-        box.classList.add('hidden');
-        box.innerHTML = '';
-        return;
-    }
-
-    // Если есть точное совпадение с высоким скором — показываем его первым
-    // с плашкой «Уже в базе». Иначе — список кандидатов.
-    const html = items.map(p => {
-        const dept = p.department ? `<span class="fio-dept">(${esc(p.department)})</span>` : '';
-        const score = p.is_exact
-            ? '<span class="fio-badge fio-badge-exact">точное совпадение</span>'
-            : `<span class="fio-badge fio-badge-score">${p.match_score}%</span>`;
-        const extra = [p.rank, p.doc_number].filter(Boolean).map(esc).join(' · ');
-        return `
-            <div class="fio-suggest-item" data-person-id="${p.id}"
-                 data-fio="${esc(p.full_name)}"
-                 data-rank="${esc(p.rank || '')}"
-                 data-doc="${esc(p.doc_number || '')}">
-                <div class="fio-suggest-line">
-                    <span class="fio-name">${esc(p.full_name)}</span>
-                    ${score}
-                    ${dept}
-                </div>
-                ${extra ? `<div class="fio-suggest-extra">${extra}</div>` : ''}
-            </div>
-        `;
-    }).join('');
-
-    box.innerHTML = html;
-    box.classList.remove('hidden');
-
-    // Клик по варианту — применяем через /apply-person
-    box.querySelectorAll('.fio-suggest-item').forEach(div => {
-        div.addEventListener('click', async () => {
-            const personId = parseInt(div.dataset.personId, 10);
-            await applyPersonToSlot(slotId, personId, {
-                full_name:  div.dataset.fio,
-                rank:       div.dataset.rank,
-                doc_number: div.dataset.doc,
+    attachFio(input, {
+        container: input.parentElement, // td[position:relative]
+        getExtraParams: () => ({
+            rank:       el(`rank-${slotId}`)?.value?.trim() || '',
+            doc_number: el(`doc-${slotId}`)?.value?.trim()  || '',
+        }),
+        onSelect: (person) => {
+            // Dept-специфика: применяем через /apply-person с проверкой version.
+            applyPersonToSlot(slotId, person.id, {
+                full_name:  person.full_name,
+                rank:       person.rank,
+                doc_number: person.doc_number,
             });
-            box.classList.add('hidden');
-        });
+        },
     });
 }
 

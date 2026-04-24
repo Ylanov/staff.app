@@ -291,17 +291,31 @@
                                     <button id="dept-duty-next-month"  class="btn btn-outlined btn-xs" type="button">→</button>
                                     <button id="dept-duty-today-month" class="btn btn-text btn-xs"     type="button">Сегодня</button>
                                 </div>
+                                <!-- Статус утверждения месяца + кнопка Утвердить/Редактировать -->
+                                <span id="dept-duty-approval-badge"
+                                      style="display:none; margin-left:auto; padding:4px 10px;
+                                             font-size:0.78rem; font-weight:600; border-radius:10px;
+                                             white-space:nowrap;"></span>
+                                <button id="dept-duty-approve-btn"
+                                        class="btn btn-success btn-sm"
+                                        style="display:none; white-space:nowrap;" type="button">
+                                    📌 Утвердить
+                                </button>
+                                <button id="dept-duty-unapprove-btn"
+                                        class="btn btn-outlined btn-sm"
+                                        style="display:none; white-space:nowrap;" type="button">
+                                    ✎ Редактировать
+                                </button>
                                 <button id="dept-duty-add-person-btn" class="btn btn-outlined btn-sm" type="button">
                                     + Добавить человека
                                 </button>
                             </div>
 
-                            <!-- Поиск человека -->
+                            <!-- Поиск человека (автокомплит через fio_autocomplete.js) -->
                             <div id="dept-duty-person-search-wrap" class="duty-person-search hidden">
                                 <input type="text" id="dept-duty-person-search-input"
                                        placeholder="Поиск по ФИО…" autocomplete="off"
                                        class="duty-person-search__input">
-                                <div id="dept-duty-person-results" class="duty-person-results"></div>
                             </div>
 
                             <div class="duty-grid-wrap">
@@ -426,6 +440,10 @@
                     Графики наряда
                 </button>
                 <button class="tab-btn"
+                        role="tab" aria-selected="false" aria-controls="tab-duty-history" type="button">
+                    История утверждений
+                </button>
+                <button class="tab-btn"
                         role="tab" aria-selected="false" aria-controls="tab-combat" type="button">
                     Боевой расчёт
                 </button>
@@ -519,32 +537,22 @@
                  ══════════════════════════════════════════════════════════════ -->
             <div id="tab-editor" class="hidden" role="tabpanel">
 
-                <div class="tools-bar">
-                    <div class="tools-bar__buttons">
+              <div class="editor-layout">
+
+               <aside class="editor-sidebar tools-bar tools-bar--vertical">
+                    <div class="tools-bar__buttons"
+                         style="display:flex; flex-direction:column; gap:6px; align-items:stretch;">
 
                         <!-- Новый список -->
-                        <button class="tool-trigger" data-panel="panel-new-list" type="button">
+                        <button class="tool-trigger" data-panel="panel-new-list" type="button"
+                                style="justify-content:space-between; width:100%;">
+                            <span style="display:inline-flex; align-items:center; gap:8px;">
                             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
                                  stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                                 <path d="M12 5v14M5 12h14"/>
                             </svg>
                             Новый список
-                            <svg class="tool-trigger__chevron" width="12" height="12" viewBox="0 0 24 24" fill="none"
-                                 stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
-                                <path d="M6 9l6 6 6-6"/>
-                            </svg>
-                        </button>
-
-                        <!-- Группа -->
-                        <button class="tool-trigger" data-panel="panel-group" type="button">
-                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-                                 stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                                <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/>
-                                <circle cx="9" cy="7" r="4"/>
-                                <path d="M23 21v-2a4 4 0 0 0-3-3.87"/>
-                                <path d="M16 3.13a4 4 0 0 1 0 7.75"/>
-                            </svg>
-                            Группа
+                            </span>
                             <svg class="tool-trigger__chevron" width="12" height="12" viewBox="0 0 24 24" fill="none"
                                  stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
                                 <path d="M6 9l6 6 6-6"/>
@@ -552,23 +560,26 @@
                         </button>
 
                         <!-- Должности -->
-                        <button class="tool-trigger" data-panel="panel-positions" type="button">
+                        <button class="tool-trigger" data-panel="panel-positions" type="button"
+                                style="justify-content:space-between; width:100%;">
+                            <span style="display:inline-flex; align-items:center; gap:8px;">
                             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
                                  stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                                 <path d="M20 7H4a2 2 0 0 0-2 2v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2z"/>
                                 <path d="M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16"/>
                             </svg>
                             Должности
+                            </span>
                             <svg class="tool-trigger__chevron" width="12" height="12" viewBox="0 0 24 24" fill="none"
                                  stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
                                 <path d="M6 9l6 6 6-6"/>
                             </svg>
                         </button>
 
-                        <div class="tools-bar__sep"></div>
-
                         <!-- Расписание -->
-                        <button class="tool-trigger" data-panel="panel-schedule" type="button">
+                        <button class="tool-trigger" data-panel="panel-schedule" type="button"
+                                style="justify-content:space-between; width:100%;">
+                            <span style="display:inline-flex; align-items:center; gap:8px;">
                             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
                                  stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                                 <rect x="3" y="4" width="18" height="18" rx="2"/>
@@ -576,16 +587,17 @@
                                 <path d="M8 14h.01M12 14h.01M16 14h.01M8 18h.01M12 18h.01"/>
                             </svg>
                             Расписание
+                            </span>
                             <svg class="tool-trigger__chevron" width="12" height="12" viewBox="0 0 24 24" fill="none"
                                  stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
                                 <path d="M6 9l6 6 6-6"/>
                             </svg>
                         </button>
 
-                        <div class="tools-bar__sep"></div>
-
                         <!-- Выгрузка .docx -->
-                        <button class="tool-trigger tool-trigger--export" data-panel="panel-export" type="button">
+                        <button class="tool-trigger tool-trigger--export" data-panel="panel-export" type="button"
+                                style="justify-content:space-between; width:100%;">
+                            <span style="display:inline-flex; align-items:center; gap:8px;">
                             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
                                  stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                                 <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
@@ -593,6 +605,7 @@
                                 <line x1="12" y1="15" x2="12" y2="3"/>
                             </svg>
                             Выгрузка .docx
+                            </span>
                             <svg class="tool-trigger__chevron" width="12" height="12" viewBox="0 0 24 24" fill="none"
                                  stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
                                 <path d="M6 9l6 6 6-6"/>
@@ -617,25 +630,6 @@
                                 <span style="font-size:0.72rem; color:var(--md-on-surface-hint); margin-left:8px;">
                                     Шаблон → Расписание → Рабочие списки
                                 </span>
-                            </div>
-                        </div>
-                    </div>
-
-                    <!-- Панель: Группа -->
-                    <div class="tools-panel" id="panel-group">
-                        <div class="tools-panel__inner">
-                            <div class="tools-panel__row">
-                                <div class="select-field" style="min-width:200px;">
-                                    <label class="field-label" for="group-event-id">Список</label>
-                                    <select id="group-event-id"></select>
-                                </div>
-                                <div class="field" style="flex:1; min-width:180px; max-width:280px;">
-                                    <label class="field-label" for="group-name">Название группы</label>
-                                    <input type="text" id="group-name" placeholder="Например: Группа управления">
-                                </div>
-                                <button id="add-group-btn" class="btn btn-outlined btn-sm" type="button">
-                                    Добавить группу
-                                </button>
                             </div>
                         </div>
                     </div>
@@ -719,8 +713,10 @@
                             </div>
                         </div>
                     </div>
-                </div>
+                </div><!-- /.editor-sidebar (tools-bar) -->
+               </aside>
 
+               <div class="editor-main">
                 <!-- ── Editor Panel ─────────────────────────────────────────── -->
                 <div class="editor-panel">
                     <div class="editor-toolbar">
@@ -827,6 +823,24 @@
                                 <tbody id="master-tbody"></tbody>
                             </table>
                         </div>
+
+                        <!-- Добавление новой группы внизу редактора.
+                             eventId берётся из текущего открытого шаблона
+                             (admin.js currentEditorEventId). -->
+                        <div id="editor-add-group-row"
+                             style="display:flex; align-items:flex-end; gap:10px; flex-wrap:wrap;
+                                    padding:12px 18px; border-top:1px solid var(--md-outline-variant);
+                                    background:var(--md-surface-variant);">
+                            <div class="field" style="flex:1; min-width:200px; max-width:320px;">
+                                <label class="field-label" for="editor-new-group-name">Новая группа</label>
+                                <input type="text" id="editor-new-group-name"
+                                       placeholder="Например: Группа управления" autocomplete="off">
+                            </div>
+                            <button id="editor-add-group-btn"
+                                    class="btn btn-success btn-sm" type="button">
+                                + Добавить группу
+                            </button>
+                        </div>
                     </div>
 
                     <!-- Empty state -->
@@ -845,7 +859,9 @@
                             <br>Готовые списки по датам находятся во вкладке <b>«История»</b>.
                         </p>
                     </div>
-                </div>
+                </div><!-- /.editor-panel -->
+               </div><!-- /.editor-main -->
+              </div><!-- /.editor-layout -->
 
             </div><!-- /#tab-editor -->
 
@@ -1185,6 +1201,15 @@
                                            color:var(--md-on-surface);">
                                 <option value="">Все управления</option>
                             </select>
+                            <!-- Показать уволенных (admin-only) -->
+                            <label class="admin-only-field hidden"
+                                   style="display:flex; align-items:center; gap:6px;
+                                          font-size:0.82rem; color:var(--md-on-surface-variant);
+                                          cursor:pointer; user-select:none;"
+                                   title="Показать уволенных (read-only, с меткой даты)">
+                                <input type="checkbox" id="persons-show-fired" style="cursor:pointer;">
+                                Уволенные
+                            </label>
                         </div>
                         <div style="display:flex; gap:8px; flex-wrap:wrap;">
                             <input type="file" id="persons-import-input" accept=".xlsx,.xls" class="hidden">
@@ -1374,7 +1399,7 @@
                         <!-- Контейнер сетки (показывается после выбора графика) -->
                         <div id="duty-grid-container" class="hidden">
 
-                            <!-- Toolbar: навигация + добавить человека -->
+                            <!-- Toolbar: навигация + утверждение + добавить человека -->
                             <div class="duty-grid-toolbar">
                                 <div class="duty-month-nav">
                                     <button id="duty-prev-month"  class="btn btn-outlined btn-xs" type="button">←</button>
@@ -1382,17 +1407,28 @@
                                     <button id="duty-next-month"  class="btn btn-outlined btn-xs" type="button">→</button>
                                     <button id="duty-today-month" class="btn btn-text btn-xs"     type="button">Сегодня</button>
                                 </div>
+                                <span id="duty-approval-badge"
+                                      style="display:none; margin-left:auto; padding:4px 10px;
+                                             font-size:0.78rem; font-weight:600; border-radius:10px;
+                                             white-space:nowrap;"></span>
+                                <button id="duty-approve-btn" class="btn btn-success btn-sm"
+                                        style="display:none; white-space:nowrap;" type="button">
+                                    📌 Утвердить
+                                </button>
+                                <button id="duty-unapprove-btn" class="btn btn-outlined btn-sm"
+                                        style="display:none; white-space:nowrap;" type="button">
+                                    ✎ Редактировать
+                                </button>
                                 <button id="duty-add-person-btn" class="btn btn-outlined btn-sm" type="button">
                                     + Добавить человека
                                 </button>
                             </div>
 
-                            <!-- Поиск человека -->
+                            <!-- Поиск человека (автокомплит через fio_autocomplete.js) -->
                             <div id="duty-person-search-wrap" class="duty-person-search hidden">
                                 <input type="text" id="duty-person-search-input"
                                        placeholder="Поиск по ФИО…" autocomplete="off"
                                        class="duty-person-search__input">
-                                <div id="duty-person-results" class="duty-person-results"></div>
                             </div>
 
                             <!-- Индикатор загрузки -->
@@ -1417,6 +1453,59 @@
                     </div><!-- /.duty-grid-panel -->
                 </div><!-- /.duty-layout -->
             </div><!-- /#tab-duty -->
+
+            <!-- ══════════════════════════════════════════════════════════════
+                 Tab: История утверждений (admin)
+                 ══════════════════════════════════════════════════════════════ -->
+            <div id="tab-duty-history" class="hidden" role="tabpanel">
+                <div class="page-header" style="margin-bottom:16px;">
+                    <h2 class="page-title">История утверждений графиков наряда</h2>
+                </div>
+
+                <!-- Фильтры -->
+                <div style="display:flex; gap:12px; align-items:flex-end; flex-wrap:wrap;
+                            padding:12px 0; margin-bottom:8px;">
+                    <div class="field" style="min-width:220px;">
+                        <label class="field-label" for="dh-filter-schedule">График</label>
+                        <select id="dh-filter-schedule">
+                            <option value="">— все графики —</option>
+                        </select>
+                    </div>
+                    <div class="field" style="min-width:120px;">
+                        <label class="field-label" for="dh-filter-year">Год</label>
+                        <select id="dh-filter-year">
+                            <option value="">— все —</option>
+                        </select>
+                    </div>
+                    <button id="dh-reset-btn" class="btn btn-outlined btn-sm" type="button">Сбросить</button>
+                </div>
+
+                <!-- Список утверждений -->
+                <div class="data-table-wrap">
+                    <table id="dh-table">
+                        <thead>
+                            <tr>
+                                <th style="min-width:220px;">График</th>
+                                <th style="min-width:120px;">Управление</th>
+                                <th style="min-width:90px;">Месяц</th>
+                                <th style="min-width:140px;">Утверждён</th>
+                                <th style="min-width:110px;">Кем</th>
+                                <th style="width:110px;"></th>
+                            </tr>
+                        </thead>
+                        <tbody id="dh-tbody">
+                            <tr><td colspan="6" style="padding:24px; text-align:center; color:var(--md-on-surface-hint);">
+                                Загрузка…
+                            </td></tr>
+                        </tbody>
+                    </table>
+                </div>
+
+                <!-- Детали выбранного snapshot'а -->
+                <div id="dh-detail" class="hidden" style="margin-top:20px; padding:16px;
+                            background:var(--md-surface-variant);
+                            border-radius:var(--md-radius-md);"></div>
+            </div><!-- /#tab-duty-history -->
 
             <!-- ══════════════════════════════════════════════════════════════
                  Tab: Боевой расчёт

@@ -11,6 +11,7 @@
 
 import { api } from './api.js';
 import { formatRole } from './ui.js';
+import { attach as attachFio } from './fio_autocomplete.js';
 
 // ─── Состояние ────────────────────────────────────────────────────────────────
 
@@ -296,6 +297,38 @@ function _bindShellEvents() {
 
     document.getElementById('dept-persons-cancel-btn')?.addEventListener('click', _hideAddForm);
     document.getElementById('dept-persons-save-btn')?.addEventListener('click', _saveNewPerson);
+
+    // Автокомплит ФИО в форме добавления: при выборе подтягиваем всю
+    // информацию из общей базы (звание, №, должность, дата рождения,
+    // телефон) — пользователь видит, что такой человек уже есть, и
+    // может нажать «Сохранить»: сервер ответит 409 (дубликат) и покажет
+    // подсказку «такой уже есть, обратитесь к админу».
+    const fioInput = document.getElementById('dp-fullname');
+    if (fioInput) {
+        attachFio(fioInput, {
+            container: fioInput.parentElement, // .field
+            onSelect: (person) => {
+                const set = (id, val) => {
+                    const el = document.getElementById(id);
+                    if (el && val != null) el.value = val;
+                };
+                set('dp-fullname', person.full_name);
+                set('dp-rank',     person.rank);
+                set('dp-doc',      person.doc_number);
+                set('dp-pos',      person.position_title);
+                set('dp-birth',    person.birth_date);
+                set('dp-phone',    person.phone);
+                if (person.is_exact) {
+                    window.showSnackbar?.(
+                        person.department === null || person.department === undefined
+                            ? `«${person.full_name}» уже в общей базе — обратитесь к админу для перевода`
+                            : `«${person.full_name}» уже в вашей базе`,
+                        'info',
+                    );
+                }
+            },
+        });
+    }
 
     // Делегирование действий в таблице
     document.getElementById('dept-persons-tbody')?.addEventListener('click', (e) => {

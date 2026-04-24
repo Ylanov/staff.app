@@ -1,5 +1,6 @@
 // static/js/ui.js
 import { api } from './api.js';
+import { attach as attachFio } from './fio_autocomplete.js';
 
 // ─── View switching ───────────────────────────────────────────────────────────
 
@@ -69,27 +70,29 @@ export function setUserDisplay(username) {
 // ─── Admin tabs ───────────────────────────────────────────────────────────────
 //
 // Порядок вкладок (индексы кнопок .tab-btn):
-//   0 → dashboard   (Дашборд)
-//   1 → editor      (Редактор шаблонов)
-//   2 → history     (История — рабочие списки по датам)
-//   3 → users       (Пользователи)
-//   4 → persons     (База людей)
-//   5 → duty        (Графики наряда)
-//   6 → combat      (Боевой расчёт)
-//   7 → calendar    (Календарь задач)
+//   0 → dashboard    (Дашборд)
+//   1 → editor       (Редактор шаблонов)
+//   2 → history      (История — рабочие списки по датам)
+//   3 → users        (Пользователи)
+//   4 → persons      (База людей)
+//   5 → duty         (Графики наряда)
+//   6 → duty-history (История утверждений)
+//   7 → combat       (Боевой расчёт)
+//   8 → calendar     (Календарь задач)
 
 let _tasksAdminInited = false;
 
 export function switchAdminTab(tab) {
-    const tabDashboard = document.getElementById('tab-dashboard');
-    const tabEditor    = document.getElementById('tab-editor');
-    const tabHistory   = document.getElementById('tab-history');
-    const tabUsers     = document.getElementById('tab-users');
-    const tabPersons   = document.getElementById('tab-persons');
-    const tabDuty      = document.getElementById('tab-duty');
-    const tabCombat    = document.getElementById('tab-combat');
-    const tabCalendar  = document.getElementById('tab-calendar');
-    const tabBtns      = document.querySelectorAll('.tab-btn');
+    const tabDashboard    = document.getElementById('tab-dashboard');
+    const tabEditor       = document.getElementById('tab-editor');
+    const tabHistory      = document.getElementById('tab-history');
+    const tabUsers        = document.getElementById('tab-users');
+    const tabPersons      = document.getElementById('tab-persons');
+    const tabDuty         = document.getElementById('tab-duty');
+    const tabDutyHistory  = document.getElementById('tab-duty-history');
+    const tabCombat       = document.getElementById('tab-combat');
+    const tabCalendar     = document.getElementById('tab-calendar');
+    const tabBtns         = document.querySelectorAll('.tab-btn');
 
     // Скрываем все вкладки и сбрасываем кнопки
     tabDashboard?.classList.add('hidden');
@@ -98,6 +101,7 @@ export function switchAdminTab(tab) {
     tabUsers?.classList.add('hidden');
     tabPersons?.classList.add('hidden');
     tabDuty?.classList.add('hidden');
+    tabDutyHistory?.classList.add('hidden');
     tabCombat?.classList.add('hidden');
     tabCalendar?.classList.add('hidden');
     tabBtns.forEach(btn => {
@@ -140,14 +144,21 @@ export function switchAdminTab(tab) {
         activate(5);
         import('./duty.js').then(m => m.loadSchedules());
 
+    } else if (tab === 'duty-history') {
+        tabDutyHistory?.classList.remove('hidden');
+        activate(6);
+        import('./duty_history.js').then(m => m.initDutyHistory()).catch(err => {
+            console.error('duty_history load:', err);
+        });
+
     } else if (tab === 'combat') {
         tabCombat?.classList.remove('hidden');
-        activate(6);
+        activate(7);
         import('./combat_calc.js').then(m => m.initCombatCalc(true));
 
     } else if (tab === 'calendar') {
         tabCalendar?.classList.remove('hidden');
-        activate(7);
+        activate(8);
         import('./tasks.js').then(m => {
             if (!_tasksAdminInited) {
                 m.initTasks('tasks-root', true);
@@ -190,8 +201,9 @@ export async function loadEventsDropdowns() {
                 .join('');
         }
 
+        // 'group-event-id' убран — выбор шаблона для добавления группы теперь
+        // всегда = текущий открытый шаблон (editor-event-id).
         [
-            'group-event-id',
             'editor-event-id',
         ].forEach(id => {
             const el = document.getElementById(id);
@@ -355,8 +367,10 @@ export function updateDeptCardProgress(eventId, slots) {
 let _personsData   = [];
 let _personsFiltered = [];
 let _editingId     = null;
+let _transferringId = null;   // id строки в режиме быстрого перевода
 let _searchTimeout = null;
 let _personsDeptFilter = ''; // активный фильтр по управлению (admin only)
+let _personsIncludeFired = false; // чекбокс «Показать уволенных» (admin only)
 
 export async function loadPersons(searchQuery = '') {
     const tbody = document.getElementById('persons-tbody');
@@ -401,8 +415,11 @@ export async function loadPersons(searchQuery = '') {
     // -----------------------------------------------------------
 
     try {
-        const params = searchQuery ? `?q=${encodeURIComponent(searchQuery)}&limit=500` : '?limit=500';
-        _personsData = await api.get(`/persons${params}`);
+        const qs = new URLSearchParams();
+        qs.set('limit', '500');
+        if (searchQuery) qs.set('q', searchQuery);
+        if (isAdmin && _personsIncludeFired) qs.set('include_fired', 'true');
+        _personsData = await api.get(`/persons?${qs.toString()}`);
         _applyPersonsFilters();
         empty?.classList.toggle('hidden', _personsData.length > 0);
     } catch (err) {
@@ -493,10 +510,57 @@ function renderPersonsTable(persons) {
         }
 
         // РЕЖИМ ПРОСМОТРА
+        const isFired   = !!p.fired_at;
+        const rowStyle  = isFired
+            ? ' style="opacity:0.55; background:var(--md-surface-variant);"'
+            : '';
+        const firedDate = isFired ? formatDate(p.fired_at.slice(0, 10)) : '';
+        const nameCell  = isFired
+            ? `<span style="font-weight:500;">${esc(p.full_name)}</span>
+               <span class="fio-badge fio-badge-fired" title="Уволен ${firedDate}"
+                     style="margin-left:6px; font-size:0.7em; padding:2px 7px; border-radius:10px; background:#b71c1c; color:#fff; white-space:nowrap;">
+                 Уволен ${firedDate}
+               </span>`
+            : `<span style="font-weight:500;">${esc(p.full_name)}</span>`;
+        // Inline режим быстрого перевода: показываем только select + ✓ / ✕
+        let actionBtns;
+        if (!isFired && _transferringId === p.id && isAdmin) {
+            const roleOpts = (window.availableRoles || []).map(r =>
+                `<option value="${r}" ${r === p.department ? 'selected' : ''}>${esc(formatRole(r))}</option>`
+            ).join('');
+            actionBtns = `
+                <select id="transfer-dept-${p.id}" class="person-inline-input"
+                        style="padding:0 4px !important; min-width:140px;">
+                    <option value="">— в общий пул —</option>
+                    ${roleOpts}
+                </select>
+                <button class="btn btn-filled btn-xs person-transfer-save-btn"
+                        data-person-id="${p.id}" type="button" title="Подтвердить перевод">✓</button>
+                <button class="btn btn-outlined btn-xs person-transfer-cancel-btn"
+                        type="button" title="Отмена">✕</button>
+            `;
+        } else if (isFired) {
+            actionBtns = `<button class="btn btn-success btn-xs person-unfire-btn"
+                       data-person-id="${p.id}" type="button" title="Вернуть в активные">↺ Вернуть</button>`;
+        } else {
+            const transferBtn = isAdmin
+                ? `<button class="btn btn-outlined btn-xs person-transfer-btn"
+                           data-person-id="${p.id}" type="button"
+                           title="Быстро перевести в другое управление">→</button>`
+                : '';
+            actionBtns = `
+                <button class="btn btn-outlined btn-xs person-edit-btn"
+                        data-person-id="${p.id}" type="button" title="Редактировать">✎</button>
+                ${transferBtn}
+                <button class="btn btn-danger btn-xs person-fire-btn"
+                        data-person-id="${p.id}" type="button" title="Уволить (с сохранением в истории)">⊘ Уволить</button>
+            `;
+        }
+
         return `
-            <tr data-person-id="${p.id}" id="person-row-${p.id}">
+            <tr data-person-id="${p.id}" id="person-row-${p.id}"${rowStyle}>
                 <td style="color:var(--md-on-surface-hint);font-family:var(--md-font-mono);font-size:0.72rem;">${p.id}</td>
-                <td class="person-cell-name" style="font-weight:500;">${esc(p.full_name)}</td>
+                <td class="person-cell-name">${nameCell}</td>
                 <td class="person-cell-rank">${esc(p.rank || '—')}</td>
                 <td class="person-cell-doc">${esc(p.doc_number || '—')}</td>
                 ${deptBadge}
@@ -506,8 +570,7 @@ function renderPersonsTable(persons) {
                 <td><span style="font-size:0.75rem;color:var(--md-on-surface-hint);">${esc(p.notes || '—')}</span></td>
                 <td>
                     <div style="display:flex;gap:4px;">
-                        <button class="btn btn-outlined btn-xs person-edit-btn" data-person-id="${p.id}" type="button" title="Редактировать">✎</button>
-                        <button class="btn btn-danger btn-xs person-del-btn"    data-person-id="${p.id}" type="button" title="Удалить">✕</button>
+                        ${actionBtns}
                     </div>
                 </td>
             </tr>`;
@@ -571,6 +634,90 @@ async function deletePerson(personId) {
         window.showSnackbar?.('Удалено', 'success');
     } catch (err) {
         window.showSnackbar?.('Ошибка удаления', 'error');
+    }
+}
+
+async function firePerson(personId) {
+    const person = _personsData.find(p => p.id === personId);
+    const name   = person?.full_name || 'этого человека';
+    if (!confirm(
+        `Уволить «${name}»?\n\n` +
+        `Он будет удалён из активных графиков наряда.\n` +
+        `Запись останется в базе для истории (duty_marks и списки ` +
+        `сохранятся). Позже можно вернуть через «↺ Вернуть».`
+    )) return;
+    try {
+        const updated = await api.post(`/persons/${personId}/fire`);
+        const idx = _personsData.findIndex(p => p.id === personId);
+        if (idx >= 0) {
+            if (_personsIncludeFired) {
+                _personsData[idx] = updated;
+            } else {
+                _personsData.splice(idx, 1);
+            }
+        }
+        _applyPersonsFilters();
+        window.showSnackbar?.(`«${name}» уволен`, 'success');
+    } catch (err) {
+        window.showSnackbar?.(
+            err?.status === 409 ? 'Уже уволен' : 'Ошибка увольнения',
+            'error',
+        );
+    }
+}
+
+function startTransferRow(personId) {
+    if (_editingId)     cancelEditRow();
+    _transferringId = personId;
+    renderPersonsTable(_personsFiltered);
+    setTimeout(() => document.getElementById(`transfer-dept-${personId}`)?.focus(), 50);
+}
+
+function cancelTransferRow() {
+    _transferringId = null;
+    renderPersonsTable(_personsFiltered);
+}
+
+async function saveTransferRow(personId) {
+    const sel = document.getElementById(`transfer-dept-${personId}`);
+    if (!sel) return;
+    const newDept = sel.value || null; // '' → NULL (общий пул)
+
+    const person = _personsData.find(p => p.id === personId);
+    const oldDept = person?.department ?? null;
+    if (newDept === oldDept) {
+        // Нет смысла дёргать сервер
+        cancelTransferRow();
+        return;
+    }
+
+    try {
+        const updated = await api.put(`/persons/${personId}`, { department: newDept });
+        const idx = _personsData.findIndex(p => p.id === personId);
+        if (idx >= 0) _personsData[idx] = updated;
+        _transferringId = null;
+        _applyPersonsFilters();
+        const label = newDept ? formatRole(newDept) : '— общий пул —';
+        window.showSnackbar?.(`«${updated.full_name}» → ${label}`, 'success');
+    } catch (err) {
+        window.showSnackbar?.('Ошибка перевода', 'error');
+    }
+}
+
+async function unfirePerson(personId) {
+    const person = _personsData.find(p => p.id === personId);
+    const name   = person?.full_name || 'этого человека';
+    try {
+        const updated = await api.post(`/persons/${personId}/unfire`);
+        const idx = _personsData.findIndex(p => p.id === personId);
+        if (idx >= 0) _personsData[idx] = updated;
+        _applyPersonsFilters();
+        window.showSnackbar?.(`«${name}» возвращён в активные`, 'success');
+    } catch (err) {
+        window.showSnackbar?.(
+            err?.status === 409 ? 'Уже активен' : 'Ошибка восстановления',
+            'error',
+        );
     }
 }
 
@@ -729,14 +876,28 @@ export function initPersonsTab() {
     // Делегирование событий — таблица людей
     document.getElementById('persons-tbody')?.addEventListener('click', (e) => {
         const editBtn    = e.target.closest('.person-edit-btn');
-        const delBtn     = e.target.closest('.person-del-btn');
+        const fireBtn    = e.target.closest('.person-fire-btn');
+        const unfireBtn  = e.target.closest('.person-unfire-btn');
+        const transferBtn    = e.target.closest('.person-transfer-btn');
+        const transferSave   = e.target.closest('.person-transfer-save-btn');
+        const transferCancel = e.target.closest('.person-transfer-cancel-btn');
         const saveEdit   = e.target.closest('.person-save-edit-btn');
         const cancelEdit = e.target.closest('.person-cancel-edit-btn');
 
-        if (editBtn)    startEditRow(parseInt(editBtn.dataset.personId));
-        if (delBtn)     deletePerson(parseInt(delBtn.dataset.personId));
-        if (saveEdit)   saveEditRow(parseInt(saveEdit.dataset.personId));
-        if (cancelEdit) cancelEditRow();
+        if (editBtn)         startEditRow(parseInt(editBtn.dataset.personId));
+        if (fireBtn)         firePerson(parseInt(fireBtn.dataset.personId));
+        if (unfireBtn)       unfirePerson(parseInt(unfireBtn.dataset.personId));
+        if (transferBtn)     startTransferRow(parseInt(transferBtn.dataset.personId));
+        if (transferSave)    saveTransferRow(parseInt(transferSave.dataset.personId));
+        if (transferCancel)  cancelTransferRow();
+        if (saveEdit)        saveEditRow(parseInt(saveEdit.dataset.personId));
+        if (cancelEdit)      cancelEditRow();
+    });
+
+    // Чекбокс «Показать уволенных» (admin-only)
+    document.getElementById('persons-show-fired')?.addEventListener('change', (e) => {
+        _personsIncludeFired = !!e.target.checked;
+        loadPersons(document.getElementById('persons-search')?.value?.trim() || '');
     });
 }
 
@@ -863,104 +1024,51 @@ function showImportErrorsModal(errors, result) {
 }
 
 // ─── Автодополнение ФИО ───────────────────────────────────────────────────────
-
-let _acTimeout = null;
+// Работает поверх единого fio_autocomplete-компонента.
+//
+// Делегируем на «focusin» в #master-tbody (admin-редактор расписания):
+// при первом фокусе в input[id^="name-"] подвязываем компонент лениво.
+// Последующие keystrokes обрабатывает сам компонент.
+//
+// #slots-tbody (dept-редактор) здесь НЕ трогаем — department.js подвязывает
+// fio_autocomplete сам при рендере таблицы (чтобы dropdown корректно
+// отрисовывался внутри td с position:relative).
 
 export function initAutocomplete() {
-    // Единый обработчик для полей ввода имени
-    const handleInput = (e) => {
+    const attachOnFocus = (e) => {
         const input = e.target;
-        // Ищем только поля с id начинающимся на "name-"
+        if (!(input instanceof HTMLInputElement)) return;
         if (!input.id?.startsWith('name-')) return;
-        const slotId = input.id.replace('name-', '');
-        triggerAutocomplete(input, slotId);
+        if (input.__fioAc) return;
+
+        const slotId = input.id.slice('name-'.length);
+
+        attachFio(input, {
+            container: input.parentElement,
+            getExtraParams: () => ({
+                rank:       document.getElementById(`rank-${slotId}`)?.value.trim() || '',
+                doc_number: document.getElementById(`doc-${slotId}`)?.value.trim()  || '',
+            }),
+            onSelect: (person) => {
+                const nameEl = document.getElementById(`name-${slotId}`);
+                const rankEl = document.getElementById(`rank-${slotId}`);
+                const docEl  = document.getElementById(`doc-${slotId}`);
+                if (nameEl && person.full_name)  nameEl.value = person.full_name;
+                if (rankEl && person.rank)       rankEl.value = person.rank;
+                if (docEl  && person.doc_number) docEl.value  = person.doc_number;
+
+                // Лёгкий фидбек что данные подставились
+                [nameEl, rankEl, docEl].forEach(el => {
+                    if (!el || !el.value) return;
+                    el.classList.add('ac-filled');
+                    setTimeout(() => el.classList.remove('ac-filled'), 600);
+                });
+
+                // Триггерим change → admin.js сохраняет слот
+                nameEl?.dispatchEvent(new Event('change', { bubbles: true }));
+            },
+        });
     };
 
-    // Привязываем и к таблице управлений, и к главной таблице админа
-    document.getElementById('slots-tbody')?.addEventListener('input', handleInput);
-    document.getElementById('master-tbody')?.addEventListener('input', handleInput);
-
-    // Закрываем дропдаун при клике вне
-    document.addEventListener('click', (e) => {
-        if (!e.target.closest('.ac-dropdown')) {
-            closeAllDropdowns();
-        }
-    });
-}
-
-function triggerAutocomplete(input, slotId) {
-    clearTimeout(_acTimeout);
-    const query = input.value.trim();
-
-    if (query.length < 2) {
-        closeAllDropdowns();
-        return;
-    }
-
-    _acTimeout = setTimeout(async () => {
-        try {
-            const results = await api.get(`/persons/search?q=${encodeURIComponent(query)}&limit=8`);
-            if (results.length === 0) { closeAllDropdowns(); return; }
-            showDropdown(input, slotId, results);
-        } catch {
-            // Тихо игнорируем — автодополнение не критично
-        }
-    }, 250);
-}
-
-function showDropdown(input, slotId, persons) {
-    closeAllDropdowns();
-
-    const dropdown = document.createElement('div');
-    dropdown.className = 'ac-dropdown';
-    dropdown.setAttribute('role', 'listbox');
-
-    persons.forEach(person => {
-        const item = document.createElement('div');
-        item.className = 'ac-item';
-        item.setAttribute('role', 'option');
-        item.innerHTML = `
-            <span class="ac-item__name">${esc(person.full_name)}</span>
-            ${person.rank       ? `<span class="ac-item__tag">${esc(person.rank)}</span>` : ''}
-            ${person.doc_number ? `<span class="ac-item__tag ac-item__tag--doc">${esc(person.doc_number)}</span>` : ''}
-        `;
-
-        item.addEventListener('mousedown', (e) => {
-            e.preventDefault(); // не снимаем фокус с input
-
-            // Заполняем поля слота данными из базы
-            const nameEl = document.getElementById(`name-${slotId}`);
-            const rankEl = document.getElementById(`rank-${slotId}`);
-            const docEl  = document.getElementById(`doc-${slotId}`);
-
-            if (nameEl) nameEl.value = person.full_name;
-            if (rankEl && person.rank)       rankEl.value = person.rank;
-            if (docEl  && person.doc_number) docEl.value  = person.doc_number;
-
-            closeAllDropdowns();
-
-            // Даём пользователю понять что данные подставились
-            [nameEl, rankEl, docEl].forEach(el => {
-                if (!el || !el.value) return;
-                el.classList.add('ac-filled');
-                setTimeout(() => el.classList.remove('ac-filled'), 600);
-            });
-        });
-
-        dropdown.appendChild(item);
-    });
-
-    // Позиционируем под полем ввода
-    const rect = input.getBoundingClientRect();
-    dropdown.style.position = 'fixed';
-    dropdown.style.top      = `${rect.bottom + 2}px`;
-    dropdown.style.left     = `${rect.left}px`;
-    dropdown.style.width    = `${Math.max(rect.width, 240)}px`;
-    dropdown.style.zIndex   = '9000';
-
-    document.body.appendChild(dropdown);
-}
-
-function closeAllDropdowns() {
-    document.querySelectorAll('.ac-dropdown').forEach(d => d.remove());
+    document.getElementById('master-tbody')?.addEventListener('focusin', attachOnFocus);
 }

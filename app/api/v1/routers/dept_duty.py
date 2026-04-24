@@ -31,6 +31,11 @@ from app.models.duty import DutySchedule, DutySchedulePerson, DutyMark
 from app.api.dependencies import get_current_user, require_permission
 from app.core.websockets import manager
 from app.core.audit import notify_all_admins
+from app.core.duty_approvals import (
+    approve_month   as _approve_month,
+    unapprove_month as _unapprove_month,
+    get_approval    as _get_approval,
+)
 
 # Весь роутер графиков наряда управлений требует permission "duty".
 # Admin пропускается автоматически (см. require_permission).
@@ -311,7 +316,7 @@ async def toggle_my_mark(
     if not person:
         raise HTTPException(status_code=404, detail="Человек не найден")
 
-    from app.models.duty import ALL_MARK_TYPES, MARK_DUTY
+    from app.models.duty import ALL_MARK_TYPES, MARK_DUTY, MARK_VACATION
     mark_type = (payload.mark_type or MARK_DUTY).upper()
     if mark_type not in ALL_MARK_TYPES:
         raise HTTPException(status_code=400, detail=f"Недопустимый тип отметки: {mark_type}")
@@ -322,6 +327,19 @@ async def toggle_my_mark(
         DutyMark.person_id   == payload.person_id,
         DutyMark.duty_date   == payload.duty_date,
     ).first()
+
+    # Защита: нельзя ставить наряд на день, где уже стоит отпуск.
+    # Смена V→N невозможна без явного снятия отпуска (клик по той же
+    # клетке в режиме O снимет V, после чего можно будет ставить N).
+    if (
+        mark_type == MARK_DUTY
+        and existing is not None
+        and existing.mark_type == MARK_VACATION
+    ):
+        raise HTTPException(
+            status_code=409,
+            detail="На день отпуска нельзя ставить наряд. Сначала снимите отпуск.",
+        )
 
     if existing:
         if existing.mark_type == mark_type:
@@ -430,3 +448,115 @@ def _check_owner(db: Session, schedule_id: int, username: str) -> DutySchedule:
     if not s:
         raise HTTPException(status_code=404, detail="График не найден")
     return s
+
+
+# ─── Утверждение графика за месяц ────────────────────────────────────────────
+
+def _validate_month(year: int, month: int) -> None:
+    if month < 1 or month > 12:
+        raise HTTPException(status_code=400, detail="month должен быть в диапазоне 1..12")
+    if year < 2000 or year > 2100:
+        raise HTTPException(status_code=400, detail="year вне допустимого диапазона")
+
+
+@router.get("/schedules/{schedule_id}/approval")
+def get_approval_status(
+    schedule_id: int,
+    year:  int = Query(...),
+    month: int = Query(...),
+    db:   Session = Depends(get_db),
+    user: User    = Depends(get_current_department_user),
+):
+    """
+    Статус утверждения за месяц.
+    Возвращает {status: 'draft'|'approved', approved_at, approved_by} — клиенту
+    этого достаточно, чтобы нарисовать badge и переключить UI между
+    «режим редактирования» и «утверждён».
+    """
+    _check_owner(db, schedule_id, user.username)
+    _validate_month(year, month)
+
+    a = _get_approval(db, schedule_id, year, month)
+    if a is None:
+        return {"status": "draft", "approved_at": None, "approved_by": None}
+    approver = None
+    if a.approved_by_user_id:
+        u = db.query(User).filter(User.id == a.approved_by_user_id).first()
+        approver = u.username if u else None
+    return {
+        "status":      "approved",
+        "approved_at": a.approved_at.isoformat(),
+        "approved_by": approver,
+    }
+
+
+@router.post("/schedules/{schedule_id}/approval", status_code=201)
+async def approve_schedule_month(
+    schedule_id: int,
+    year:  int = Query(...),
+    month: int = Query(...),
+    db:   Session = Depends(get_db),
+    user: User    = Depends(get_current_department_user),
+):
+    """
+    Утвердить месяц — снимает «режим редактирования».
+    Создаёт snapshot текущего состава и отметок за этот месяц; если snapshot
+    за этот месяц уже существовал (редкий случай: повторное утверждение
+    после разблокировки) — старый заменяется новым.
+    Админам отправляется уведомление: «<управление> утвердил <график> за <месяц/год>».
+    """
+    schedule = _check_owner(db, schedule_id, user.username)
+    _validate_month(year, month)
+
+    try:
+        approval = _approve_month(db, schedule_id, year, month, user.id)
+    except Exception:
+        db.rollback()
+        raise HTTPException(status_code=500, detail="Не удалось утвердить график")
+
+    # Уведомляем админов
+    admin_recipients: list[int] = []
+    if user.role != "admin":
+        admin_recipients = notify_all_admins(
+            db,
+            kind  = "duty_schedule_approved",
+            title = f"«{user.username}» утвердил(а) график наряда",
+            body  = f"«{schedule.title}» · {month:02d}.{year}",
+            link  = None,
+            exclude_user_id = user.id,
+        )
+
+    db.commit()
+    db.refresh(approval)
+
+    for uid in admin_recipients:
+        await manager.push_to_user(uid, {
+            "action": "notification_new", "kind": "duty_schedule_approved",
+        })
+
+    return {
+        "status":      "approved",
+        "approved_at": approval.approved_at.isoformat(),
+        "approved_by": user.username,
+    }
+
+
+@router.delete("/schedules/{schedule_id}/approval", status_code=204)
+def unapprove_schedule_month(
+    schedule_id: int,
+    year:  int = Query(...),
+    month: int = Query(...),
+    db:   Session = Depends(get_db),
+    user: User    = Depends(get_current_department_user),
+):
+    """
+    Вернуть месяц в режим редактирования. Удаляет snapshot (cascade
+    уносит *_persons и *_marks). Если snapshot'а не было — 404.
+    """
+    _check_owner(db, schedule_id, user.username)
+    _validate_month(year, month)
+
+    removed = _unapprove_month(db, schedule_id, year, month)
+    if not removed:
+        raise HTTPException(status_code=404, detail="График ещё не был утверждён")
+    db.commit()

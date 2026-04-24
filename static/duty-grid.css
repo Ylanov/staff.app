@@ -118,11 +118,18 @@
    z-index + abs-positioning. Родительская td имеет overflow: visible
    (см. ниже). */
 .duty-vacation-bar {
-    position: absolute;
-    left: 2px;
-    top: 50%;
-    transform: translateY(-50%);
-    height: 24px;
+    /* Фикс: раньше height:24px + top:50%+translate давали съезд полосы
+       за пределы строки когда рядом tr разной высоты (у владельцев
+       двустрочного ФИО + звание). Теперь полоса строго внутри своей
+       td через top/bottom — автоматически подстраивается под высоту.
+       !important — чтобы перебить возможный закэшированный старый файл. */
+    position: absolute !important;
+    left: 2px !important;
+    right: auto;
+    top: 4px !important;
+    bottom: 4px !important;
+    height: auto !important;
+    transform: none !important;
     background: linear-gradient(90deg,
                 rgba(5, 150, 105, 0.22),
                 rgba(5, 150, 105, 0.34),

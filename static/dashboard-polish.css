@@ -1,0 +1,199 @@
+/* static/dashboard-polish.css
+   Полировка дашборда админа: плотнее типографика, аккуратнее карточки,
+   быстрые действия, лучшие пустые состояния. Не конфликтует со style.css
+   (специфичность чуть выше за счёт составных селекторов). */
+
+/* ── Шапка дашборда ───────────────────────────────────────────────────────── */
+.db-header {
+    position: relative;
+}
+.db-header__date {
+    font-size: 1.05rem;
+    font-weight: 600;
+    letter-spacing: 0.2px;
+}
+/* Маленький бейдж «сегодня» справа от даты — рендерим из JS */
+.db-date-chip {
+    display: inline-block;
+    margin-left: 10px;
+    padding: 2px 9px;
+    border-radius: 999px;
+    font-size: 0.68rem;
+    font-weight: 600;
+    vertical-align: middle;
+    letter-spacing: 0.3px;
+    text-transform: uppercase;
+}
+.db-date-chip--today {
+    background: rgba(29, 158, 117, 0.14);
+    color: var(--md-success, #1D9E75);
+}
+.db-date-chip--future {
+    background: rgba(74, 124, 111, 0.12);
+    color: var(--md-primary-dark, #2f5a4f);
+}
+.db-date-chip--past {
+    background: var(--md-surface-variant);
+    color: var(--md-on-surface-hint);
+}
+
+/* ── Event-карточки: аккуратнее, с иконкой «открыть» на hover ──────────────── */
+.db-event-card {
+    position: relative;
+    transition: transform 0.12s, box-shadow 0.15s, border-color 0.12s;
+    cursor: pointer;
+}
+.db-event-card:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+}
+
+/* Уголок «→» в правом верхнем углу — показывает что карточка кликабельная.
+   Рендерим через CSS псевдоэлемент, чтобы не трогать разметку dashboard.js. */
+.db-event-card::after {
+    content: "→";
+    position: absolute;
+    top: 10px;
+    right: 12px;
+    width: 22px;
+    height: 22px;
+    border-radius: 50%;
+    background: var(--md-surface-variant);
+    color: var(--md-on-surface-hint);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 0.8rem;
+    font-weight: 600;
+    opacity: 0;
+    transition: opacity 0.12s, transform 0.12s, background 0.12s, color 0.12s;
+    transform: translateX(-4px);
+    pointer-events: none;
+}
+.db-event-card:hover::after {
+    opacity: 1;
+    transform: translateX(0);
+    background: var(--md-primary);
+    color: white;
+}
+/* В skeleton состоянии стрелки не нужно */
+.db-event-card--skel::after { display: none; }
+
+/* Заголовок карточки — больше места под длинные названия,
+   чтобы стрелка не заходила на текст */
+.db-event-card__title-row {
+    padding-right: 30px;
+}
+
+/* ── Бары прогресса — чуть плотнее, с анимацией заполнения ────────────────── */
+.db-event-card__bar-fill,
+.db-dept__bar-fill {
+    transition: width 0.35s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+/* ── Департаменты внутри карточки ─────────────────────────────────────────── */
+.db-dept {
+    padding: 4px 0;
+}
+.db-dept__head {
+    display: flex;
+    justify-content: space-between;
+    font-size: 0.76rem;
+    margin-bottom: 3px;
+    gap: 8px;
+}
+.db-dept__name {
+    color: var(--md-on-surface-variant);
+    font-weight: 500;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    max-width: 70%;
+}
+.db-dept__nums {
+    color: var(--md-on-surface-hint);
+    font-variant-numeric: tabular-nums;
+    font-size: 0.72rem;
+    flex-shrink: 0;
+}
+
+/* ── Статус-бейдж: чуть плотнее, без тени ─────────────────────────────────── */
+.db-status {
+    padding: 2px 8px;
+    font-size: 0.68rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.3px;
+    border-radius: 999px;
+    white-space: nowrap;
+}
+.db-status--active {
+    background: rgba(29, 158, 117, 0.14);
+    color: var(--md-success, #1D9E75);
+}
+.db-status--draft {
+    background: rgba(186, 117, 23, 0.14);
+    color: var(--md-warning, #BA7517);
+}
+
+/* ── Empty-стейт: дружелюбнее ─────────────────────────────────────────────── */
+.db-empty {
+    padding: 40px 20px;
+    text-align: center;
+    color: var(--md-on-surface-hint);
+    font-size: 0.88rem;
+    line-height: 1.5;
+    background: var(--md-surface);
+    border: 1px dashed var(--md-outline-variant);
+    border-radius: var(--md-radius-md, 12px);
+}
+.db-empty p { margin: 8px 0 2px; }
+.db-empty-hint {
+    font-size: 0.74rem;
+    margin-top: 10px;
+    color: var(--md-on-surface-hint);
+}
+
+/* ── Mini-календарь: активный день чуть ярче ──────────────────────────────── */
+.db-cal__day--sel {
+    box-shadow: inset 0 0 0 2px var(--md-primary);
+    font-weight: 600;
+}
+.db-cal__day--today:not(.db-cal__day--sel) {
+    /* точка-индикатор «сегодня» — если выбран другой день */
+    position: relative;
+}
+.db-cal__day--today:not(.db-cal__day--sel)::before {
+    content: "";
+    position: absolute;
+    top: 3px;
+    right: 3px;
+    width: 5px; height: 5px;
+    background: var(--md-primary);
+    border-radius: 50%;
+}
+
+/* ── Лёгкая анимация появления карточек при смене даты ────────────────────── */
+@keyframes db-fade-in {
+    from { opacity: 0; transform: translateY(4px); }
+    to   { opacity: 1; transform: translateY(0); }
+}
+.db-events .db-event-card {
+    animation: db-fade-in 0.25s ease-out both;
+}
+/* staggered через nth-child — чтобы карточки появлялись волной */
+.db-events .db-event-card:nth-child(1) { animation-delay: 0.00s; }
+.db-events .db-event-card:nth-child(2) { animation-delay: 0.05s; }
+.db-events .db-event-card:nth-child(3) { animation-delay: 0.10s; }
+.db-events .db-event-card:nth-child(4) { animation-delay: 0.15s; }
+.db-events .db-event-card:nth-child(n+5) { animation-delay: 0.20s; }
+
+/* ── Легенда: чуть аккуратнее ─────────────────────────────────────────────── */
+.db-legend__item {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    font-size: 0.72rem;
+    color: var(--md-on-surface-variant);
+    padding: 3px 0;
+}

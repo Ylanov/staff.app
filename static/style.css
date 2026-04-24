@@ -1179,6 +1179,87 @@ tbody tr.group-header td {
     display: block;
 }
 
+/* ─── Редактор шаблонов: layout sidebar + right panel ─────────────────── */
+/* Двухколоночный flex: sidebar слева (узкий, sticky), редактор справа
+   занимает всё оставшееся место. !important — чтобы никакой другой
+   .tools-bar/.card селектор не сломал компоновку. */
+.editor-layout {
+    display: flex !important;
+    flex-direction: row !important;
+    flex-wrap: nowrap !important;
+    align-items: flex-start;
+    gap: 12px;
+    width: 100%;
+}
+.editor-layout > .editor-sidebar {
+    flex: 0 0 220px !important;
+    min-width: 180px !important;
+    max-width: 240px !important;
+    width: 220px;
+    align-self: flex-start;
+    position: sticky;
+    top: 16px;
+    padding: 10px;
+    background: var(--md-surface);
+    border: 1px solid var(--md-outline-variant);
+    border-radius: var(--md-radius-md);
+    box-shadow: none;
+    margin-bottom: 0;
+}
+.editor-layout > .editor-main {
+    flex: 1 1 0 !important;
+    min-width: 0 !important;
+    width: auto;
+}
+
+/* ─── Вертикальный tools-bar (редактор шаблонов, sidebar) ───────────────── */
+/* Кнопки выстраиваются в колонку, панели всплывают справа от sidebar
+   как поповер — так sidebar остаётся узким, а у развёрнутой панели
+   достаточно места для форм. */
+.tools-bar--vertical {
+    position: relative;
+    margin-bottom: 0;
+}
+.tools-bar--vertical .tools-bar__buttons {
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 4px;
+    padding: 0;
+    flex-wrap: nowrap;
+}
+.tools-bar--vertical .tools-bar__sep {
+    width: 100%;
+    height: 1px;
+    margin: 4px 0;
+}
+.tools-bar--vertical .tool-trigger {
+    height: 36px;
+    width: 100%;
+    justify-content: space-between;
+    padding: 0 10px;
+}
+.tools-bar--vertical .tool-trigger.active .tool-trigger__chevron {
+    transform: rotate(-90deg);  /* Указывает вправо — туда где открылся поповер */
+}
+
+.tools-bar--vertical .tools-panel {
+    /* Поповер справа от sidebar: top совпадает с верхом sidebar,
+       слева от self = правый край sidebar + отступ. */
+    position: absolute;
+    top: 0;
+    left: calc(100% + 10px);
+    min-width: 360px;
+    max-width: min(520px, calc(100vw - 280px));
+    border: 1px solid var(--md-outline-variant);
+    border-radius: var(--md-radius-md);
+    box-shadow: 0 6px 20px rgba(0, 0, 0, 0.10);
+    z-index: 50;
+}
+.tools-bar--vertical .tools-panel.open {
+    display: block;
+}
+
 @keyframes panel-open {
     from { opacity: 0; transform: translateY(-4px); }
     to   { opacity: 1; transform: translateY(0); }
@@ -3219,8 +3300,14 @@ tr:hover .duty-grid__remove-person {
 
 .fio-suggest-item:last-child { border-bottom: none; }
 
-.fio-suggest-item:hover {
+.fio-suggest-item:hover,
+.fio-suggest-item--active {
     background: var(--md-surface-variant, #f5f5f5);
+}
+
+.fio-suggest-item--active {
+    outline: 2px solid var(--md-primary, #1976d2);
+    outline-offset: -2px;
 }
 
 .fio-suggest-line {

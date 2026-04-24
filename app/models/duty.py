@@ -164,6 +164,123 @@ class DutyMark(Base):
     )
 
 
+class DutyScheduleApproval(Base):
+    """
+    Утверждение графика наряда за конкретный месяц.
+
+    Пока записи нет для пары (schedule_id, year, month) — месяц в draft.
+    Есть запись — месяц approved. Повторное утверждение после разблокировки
+    удаляет старую запись и создаёт новую (версий не храним).
+
+    Snapshot состава и отметок денормализован в дочерние таблицы
+    (approval_persons, approval_marks) — чтобы история не менялась после
+    увольнений, переименований или правок текущего графика.
+    """
+
+    __tablename__ = "duty_schedule_approvals"
+
+    id                  = Column(Integer, primary_key=True, autoincrement=True)
+    schedule_id         = Column(
+        Integer,
+        ForeignKey("duty_schedules.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    year                = Column(Integer, nullable=False)
+    month               = Column(Integer, nullable=False)
+    approved_at         = Column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=lambda: datetime.now(timezone.utc),
+    )
+    approved_by_user_id = Column(
+        Integer,
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+
+    # ── Relationships ─────────────────────────────────────────────────────────
+    schedule = relationship("DutySchedule", lazy="joined")
+    persons = relationship(
+        "DutyScheduleApprovalPerson",
+        back_populates="approval",
+        cascade="all, delete-orphan",
+        order_by="DutyScheduleApprovalPerson.order_num, DutyScheduleApprovalPerson.id",
+        lazy="selectin",
+    )
+    marks = relationship(
+        "DutyScheduleApprovalMark",
+        back_populates="approval",
+        cascade="all, delete-orphan",
+        lazy="selectin",
+    )
+
+    __table_args__ = (
+        UniqueConstraint(
+            "schedule_id", "year", "month",
+            name="uq_duty_approval_schedule_month",
+        ),
+    )
+
+
+class DutyScheduleApprovalPerson(Base):
+    """
+    Запись о человеке в snapshot'е утверждённого графика.
+
+    person_id nullable: если после утверждения запись в persons
+    физически удалена (hard-delete), FK обнуляется — но full_name / rank /
+    doc_number остаются как фиксированная копия на момент утверждения.
+    """
+
+    __tablename__ = "duty_schedule_approval_persons"
+
+    id          = Column(Integer, primary_key=True, autoincrement=True)
+    approval_id = Column(
+        Integer,
+        ForeignKey("duty_schedule_approvals.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    person_id   = Column(
+        Integer,
+        ForeignKey("persons.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    full_name   = Column(String(300), nullable=False)
+    rank        = Column(String(100), nullable=True)
+    doc_number  = Column(String(100), nullable=True)
+    order_num   = Column(Integer, nullable=False, default=0)
+
+    approval = relationship("DutyScheduleApproval", back_populates="persons")
+
+
+class DutyScheduleApprovalMark(Base):
+    """
+    Snapshot отдельной отметки за утверждённый месяц.
+
+    full_name_at_time дублирует ФИО для быстрого рендера таблицы истории
+    без join на approval_persons (и чтобы отметка осталась осмысленной,
+    если запись человека потом удалена hard-delete).
+    """
+
+    __tablename__ = "duty_schedule_approval_marks"
+
+    id                = Column(Integer, primary_key=True, autoincrement=True)
+    approval_id       = Column(
+        Integer,
+        ForeignKey("duty_schedule_approvals.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    person_id         = Column(
+        Integer,
+        ForeignKey("persons.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    full_name_at_time = Column(String(300), nullable=False)
+    duty_date         = Column(Date,    nullable=False)
+    mark_type         = Column(String(2), nullable=False)
+
+    approval = relationship("DutyScheduleApproval", back_populates="marks")
+
+
 class Holiday(Base):
     """
     Справочник праздников / каникулярных дней.

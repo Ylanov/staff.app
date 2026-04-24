@@ -41,6 +41,7 @@ from pydantic import BaseModel, Field, ConfigDict
 from app.db.database import get_db
 from app.models.person import Person
 from app.models.user import User
+from app.models.duty import DutySchedulePerson
 from app.api.dependencies import get_current_user, get_current_active_admin, require_permission
 from app.core.audit import notify_all_admins
 from app.core.websockets import manager
@@ -101,6 +102,7 @@ class PersonResponse(BaseModel):
     birth_date:     Optional[date] = None
     phone:          Optional[str]  = None
     notes:          Optional[str]  = None
+    fired_at:       Optional[datetime] = None   # NULL → активный
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -118,6 +120,10 @@ class PersonSuggestion(BaseModel):
     is_exact: true если full_name совпадает побуквенно (регистронезависимо).
       Фронтенд использует это чтобы подчеркнуть точное совпадение отдельно
       от fuzzy-вариантов.
+
+    birth_date / phone — возвращаются чтобы единый fio_autocomplete.js мог
+    при выборе подставить сразу все поля (форма добавления в dept_persons,
+    редактор слотов и т.д.), а не делать второй запрос за деталями.
     """
     id:             int
     full_name:      str
@@ -125,6 +131,8 @@ class PersonSuggestion(BaseModel):
     doc_number:     Optional[str]  = None
     department:     Optional[str]  = None
     position_title: Optional[str]  = None
+    birth_date:     Optional[date] = None
+    phone:          Optional[str]  = None
     match_score:    int
     is_exact:       bool
 
@@ -200,10 +208,18 @@ def search_persons(
       - «общих» людей без привязки к управлению (department IS NULL)
         — это например те, кого другие департаменты ещё не пометили,
            либо которых админ импортировал без указания управления.
+
+    Уволенные (fired_at IS NOT NULL) не попадают в выдачу — ни для admin,
+    ни для управлений. Для «показать уволенных» используйте
+    GET /persons?include_fired=true.
     """
     from sqlalchemy import or_
 
-    query = db.query(Person).filter(Person.full_name.ilike(f"%{q}%"))
+    query = (
+        db.query(Person)
+          .filter(Person.full_name.ilike(f"%{q}%"))
+          .filter(Person.fired_at.is_(None))
+    )
     if current_user.role != "admin":
         query = query.filter(
             or_(
@@ -258,11 +274,11 @@ def suggest_persons(
 
     Видимость:
       • admin: видит всех кандидатов.
-      • department: видит своих + "общих" (department IS NULL) + тех
-        чьё ФИО совпадает с его — это последний пункт позволяет найти
-        человека которого другой департамент уже зарегистрировал раньше.
-        Именно этот случай — core бизнес-требования: "если человек
-        есть в общей базе, предложить его и применить управление".
+      • department: видит только своих (department == username) и «общих»
+        (department IS NULL). Чужих управлений не видит — переводы между
+        управлениями централизованы у админа, поэтому department'у не
+        нужно знать что человек уже закреплён за другим управлением.
+        При попытке создать дубликат POST /persons вернёт 409.
     """
     q = full_name.strip()
     if len(q) < 2:
@@ -278,6 +294,7 @@ def suggest_persons(
     sql = """
         SELECT
             id, full_name, rank, doc_number, department, position_title,
+            birth_date, phone,
             GREATEST(
                 LEAST(
                     ROUND(similarity(lower(full_name), lower(:name_q)) * 100)::int
@@ -296,8 +313,11 @@ def suggest_persons(
             (lower(full_name) = lower(:name_q)) AS is_exact
         FROM persons
         WHERE
-            similarity(lower(full_name), lower(:name_q)) > 0.25
-            OR lower(full_name) LIKE '%' || lower(:name_q) || '%'
+            fired_at IS NULL
+            AND (
+                similarity(lower(full_name), lower(:name_q)) > 0.25
+                OR lower(full_name) LIKE '%' || lower(:name_q) || '%'
+            )
     """
     params: dict = {
         "name_q": q,
@@ -305,17 +325,11 @@ def suggest_persons(
         "doc_q":  (doc_number or "").strip(),
     }
 
-    # Видимость для не-админа: свои + общие + совпавшие по ФИО.
-    # Совпадение по ФИО даёт департаменту право УВИДЕТЬ запись другого
-    # управления (но не редактировать — это запрещено в update_person).
-    # Так фронтенд может показать плашку "этот человек уже есть у upr_3,
-    # применить его?" и после подтверждения — выполнить upsert через
-    # обычный /slots PATCH, где department обновится на текущего юзера.
+    # Видимость для не-админа: только свои + общие.
+    # Чужих не показываем — переводы централизованы у админа.
     if current_user.role != "admin":
         sql += (
-            " AND (department = :user_dept "
-            "      OR department IS NULL "
-            "      OR lower(full_name) = lower(:name_q))"
+            " AND (department = :user_dept OR department IS NULL)"
         )
         params["user_dept"] = current_user.username
 
@@ -343,6 +357,8 @@ def suggest_persons(
             doc_number=     r["doc_number"],
             department=     r["department"],
             position_title= r["position_title"],
+            birth_date=     r["birth_date"],
+            phone=          r["phone"],
             match_score=    int(r["score"]),
             is_exact=       bool(r["is_exact"]),
         ))
@@ -601,8 +617,9 @@ def get_all_persons(
         page:  Optional[int] = Query(None, ge=1),
         sort:  str = Query("full_name", regex="^(full_name|rank|doc_number|department|created_at)$"),
         order: str = Query("asc", regex="^(asc|desc)$"),
-        unassigned: bool = Query(False),
-        mine:       bool = Query(False),
+        unassigned:    bool = Query(False),
+        mine:          bool = Query(False),
+        include_fired: bool = Query(False, description="Показать уволенных (admin-only UX)"),
 ):
     """
     База людей с гибким режимом ответа.
@@ -637,6 +654,13 @@ def get_all_persons(
         )
 
     query = db.query(Person)
+
+    # По умолчанию скрываем уволенных. Admin может запросить их отдельно
+    # через include_fired=true (для вкладки «Уволенные»); department не
+    # должен видеть уволенных ни в каком режиме — это централизованно
+    # управляемое поле.
+    if not include_fired or current_user.role != "admin":
+        query = query.filter(Person.fired_at.is_(None))
 
     # Видимость по роли
     if current_user.role != "admin":
@@ -768,12 +792,21 @@ def update_person(
     return person
 
 
-@router.delete("/{person_id}", summary="Удалить человека из базы")
+@router.delete("/{person_id}", summary="Удалить человека из базы (hard-delete)")
 def delete_person(
         person_id: int,
         db:        Session = Depends(get_db),
         current_user: User = Depends(require_permission("persons")),
 ):
+    """
+    Физическое удаление. Стирает Person + каскадно duty_schedule_persons
+    и duty_marks (ondelete=CASCADE), но не slots (там денормализованное ФИО
+    остаётся). Используется для уборки ошибочно созданных записей.
+
+    Для обычного «увольнения» (с сохранением истории) применяйте
+    POST /persons/{id}/fire — он оставит Person и duty_marks, удалит только
+    активные duty_schedule_persons.
+    """
     person = db.query(Person).filter(Person.id == person_id).first()
     if not person:
         raise HTTPException(status_code=404, detail="Человек не найден")
@@ -782,6 +815,75 @@ def delete_person(
     db.delete(person)
     db.commit()
     return {"message": "Удалён из базы"}
+
+
+# ─── Увольнение и восстановление (admin-only) ────────────────────────────────
+
+@router.post(
+    "/{person_id}/fire",
+    response_model=PersonResponse,
+    summary="Уволить (admin-only)",
+)
+def fire_person(
+        person_id:     int,
+        db:            Session = Depends(get_db),
+        current_admin: User    = Depends(get_current_active_admin),
+):
+    """
+    Мягкое увольнение:
+      • Person.fired_at = now()  — запись остаётся в базе.
+      • Удаляются все duty_schedule_persons для этого человека
+        (уволенный выпадает из активных графиков наряда).
+      • duty_marks НЕ удаляются — история отметок сохраняется.
+      • slots НЕ трогаем — там денормализованное ФИО.
+
+    Идемпотентно: повторный вызов на уволенном возвращает 409.
+    Централизованно у админа — департаменты увольнять не могут.
+    """
+    person = db.query(Person).filter(Person.id == person_id).first()
+    if not person:
+        raise HTTPException(status_code=404, detail="Человек не найден")
+    if person.fired_at is not None:
+        raise HTTPException(status_code=409, detail="Уже уволен")
+
+    person.fired_at = datetime.now(timezone.utc)
+
+    # Удаляем из всех активных графиков нарядов одним запросом.
+    # duty_marks остаются — это история.
+    db.query(DutySchedulePerson) \
+      .filter(DutySchedulePerson.person_id == person_id) \
+      .delete(synchronize_session=False)
+
+    db.commit()
+    db.refresh(person)
+    return person
+
+
+@router.post(
+    "/{person_id}/unfire",
+    response_model=PersonResponse,
+    summary="Восстановить уволенного (admin-only)",
+)
+def unfire_person(
+        person_id:     int,
+        db:            Session = Depends(get_db),
+        current_admin: User    = Depends(get_current_active_admin),
+):
+    """
+    Отмена увольнения: fired_at → NULL. В активные графики не возвращаем
+    автоматически — админ/управление заново добавит при необходимости.
+    Идемпотентно: повторный вызов на активном вернёт 409.
+    """
+    person = db.query(Person).filter(Person.id == person_id).first()
+    if not person:
+        raise HTTPException(status_code=404, detail="Человек не найден")
+    if person.fired_at is None:
+        raise HTTPException(status_code=409, detail="Не уволен")
+
+    person.fired_at = None
+    db.commit()
+    db.refresh(person)
+    return person
 
 
 # ─── Внутренняя функция: upsert при заполнении слота ─────────────────────────

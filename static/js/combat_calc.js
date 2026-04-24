@@ -8,6 +8,7 @@
  */
 
 import { api } from './api.js';
+import { attach as attachFio } from './fio_autocomplete.js';
 
 // ─── State ────────────────────────────────────────────────────────────────────
 
@@ -486,9 +487,25 @@ function _renderCalcView() {
         _exportInstance(instance.id);
     });
 
-    // Автодополнение из базы людей
+    // Автодополнение из базы людей — единый компонент fio_autocomplete.
+    // При выборе подставляем ФИО и звание в парный input того же слота,
+    // затем сохраняем сразу (не ждём debounce).
     panel.querySelectorAll('.cc-name-input').forEach(input => {
-        input.addEventListener('input', (e) => _onNameAutocomplete(e));
+        if (input.__fioAc) return;
+        const slotId = input.dataset.slotId;
+        attachFio(input, {
+            container: input.closest('.cc-person-wrap') || input.parentElement,
+            getExtraParams: () => ({
+                rank: document.getElementById(`cc-rank-${slotId}`)?.value.trim() || '',
+            }),
+            onSelect: (person) => {
+                const nameInp = document.getElementById(`cc-name-${slotId}`);
+                const rankInp = document.getElementById(`cc-rank-${slotId}`);
+                if (nameInp && person.full_name) nameInp.value = person.full_name;
+                if (rankInp && person.rank)      rankInp.value = person.rank;
+                _saveSlotNow(nameInp || input);
+            },
+        });
     });
 }
 
@@ -564,68 +581,7 @@ async function _saveSlotNow(input) {
 }
 
 // ─── Autocomplete ─────────────────────────────────────────────────────────────
-
-let _acTimeout = null;
-
-function _onNameAutocomplete(e) {
-    const input = e.target;
-    clearTimeout(_acTimeout);
-    const q = input.value.trim();
-    _removeDropdown(input);
-    if (q.length < 2) return;
-
-    _acTimeout = setTimeout(async () => {
-        try {
-            const persons = await api.get(`/persons/search?q=${encodeURIComponent(q)}&limit=8`);
-            if (!persons.length) return;
-            _showDropdown(input, persons);
-        } catch { /* ignore */ }
-    }, 250);
-}
-
-function _showDropdown(input, persons) {
-    _removeDropdown(input);
-    const dd = document.createElement('div');
-    dd.className = 'cc-ac-dropdown';
-    dd.setAttribute('data-for', input.id);
-
-    persons.forEach(p => {
-        const item = document.createElement('div');
-        item.className = 'cc-ac-item';
-        item.innerHTML = `
-            <span class="cc-ac-name">${_esc(p.full_name)}</span>
-            ${p.rank ? `<span class="cc-ac-rank">${_esc(p.rank)}</span>` : ''}`;
-        item.addEventListener('mousedown', (e) => {
-            e.preventDefault();
-            const slotId  = input.dataset.slotId;
-            const nameInp = document.getElementById(`cc-name-${slotId}`);
-            const rankInp = document.getElementById(`cc-rank-${slotId}`);
-            if (nameInp) nameInp.value = p.full_name;
-            if (rankInp && p.rank) rankInp.value = p.rank;
-            _removeDropdown(input);
-            // Сохраняем сразу
-            _saveSlotNow(nameInp || input);
-        });
-        dd.appendChild(item);
-    });
-
-    const rect = input.getBoundingClientRect();
-    dd.style.cssText = `
-        position: fixed;
-        top: ${rect.bottom + window.scrollY}px;
-        left: ${rect.left}px;
-        min-width: ${rect.width}px;
-        z-index: 9999;`;
-
-    document.body.appendChild(dd);
-    document.addEventListener('click', () => _removeDropdown(input), { once: true });
-}
-
-function _removeDropdown(input) {
-    document.querySelectorAll(`.cc-ac-dropdown[data-for="${input?.id}"]`)
-        .forEach(el => el.remove());
-    document.querySelectorAll('.cc-ac-dropdown').forEach(el => el.remove());
-}
+// Реализовано через единый fio_autocomplete (см. attach выше).
 
 // ─── Export ───────────────────────────────────────────────────────────────────
 

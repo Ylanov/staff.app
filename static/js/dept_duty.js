@@ -6,6 +6,7 @@
  */
 
 import { api }         from './api.js';
+import { attach as attachFio } from './fio_autocomplete.js';
 import {
     MARK_DUTY, MARK_LEAVE, MARK_VACATION, MARK_LETTER, MARK_LABEL,
     getHolidaysMap, hoursForDate,
@@ -26,6 +27,20 @@ let _viewMonth   = new Date().getMonth() + 1;
 let _holidays    = new Map();
 let _currentMode = MARK_DUTY;
 let _vacationStart = null;
+// Статус утверждения текущего (_currentId, _viewYear, _viewMonth):
+//   null                                   — ещё не загружен
+//   { status: 'draft',    approved_at:null, approved_by:null }
+//   { status: 'approved', approved_at:iso,  approved_by:'upr_3' }
+let _approval = null;
+
+// Есть ли сейчас активный draft в этой вкладке — используется app.js
+// для блокировки переключения вкладок управления. Экспортируется как
+// window.__deptDutyHasDraft чтобы app.js не импортировал весь модуль.
+function _publishDraftFlag() {
+    window.__deptDutyHasDraft = (
+        _currentId !== null && _approval !== null && _approval.status === 'draft'
+    );
+}
 
 // ─── Инициализация ────────────────────────────────────────────────────────────
 
@@ -69,8 +84,23 @@ function _bindUI() {
 
     document.getElementById('dept-duty-add-person-btn')
         ?.addEventListener('click', _showPersonSearch);
-    document.getElementById('dept-duty-person-search-input')
-        ?.addEventListener('input', _handlePersonSearch);
+
+    // Единый автокомплит ФИО: при выборе — добавляем человека в график.
+    const searchInput = document.getElementById('dept-duty-person-search-input');
+    if (searchInput) {
+        attachFio(searchInput, {
+            container: searchInput.parentElement, // .duty-person-search wrap
+            emptyHint: 'Не найдено в базе управления',
+            onSelect: (person) => {
+                _addPerson(person.id);
+            },
+        });
+    }
+
+    document.getElementById('dept-duty-approve-btn')
+        ?.addEventListener('click', _approveCurrentMonth);
+    document.getElementById('dept-duty-unapprove-btn')
+        ?.addEventListener('click', _unapproveCurrentMonth);
 }
 
 // ─── Должности (для формы создания) ──────────────────────────────────────────
@@ -211,7 +241,102 @@ async function _loadPersonsAndMarks() {
     // с пустым _persons (persons грузились параллельно) и таблица
     // рисовалась без людей. Требовался F5 чтобы всё показалось.
     await _loadPersons();
+    await _loadApproval();          // до рендера — чтобы UI сразу отразил режим
     await _loadMarksAndRender();
+}
+
+async function _loadApproval() {
+    if (!_currentId) { _approval = null; _publishDraftFlag(); return; }
+    try {
+        _approval = await api.get(
+            `/dept/schedules/${_currentId}/approval?year=${_viewYear}&month=${_viewMonth}`
+        );
+    } catch {
+        _approval = { status: 'draft', approved_at: null, approved_by: null };
+    }
+    _publishDraftFlag();
+}
+
+function _isReadOnly() {
+    return _approval && _approval.status === 'approved';
+}
+
+function _renderApprovalUI() {
+    const badge       = document.getElementById('dept-duty-approval-badge');
+    const approveBtn  = document.getElementById('dept-duty-approve-btn');
+    const unapproveBtn= document.getElementById('dept-duty-unapprove-btn');
+    const addPersonBtn= document.getElementById('dept-duty-add-person-btn');
+    if (!badge) return;
+
+    if (!_approval) {
+        badge.style.display = 'none';
+        if (approveBtn)   approveBtn.style.display   = 'none';
+        if (unapproveBtn) unapproveBtn.style.display = 'none';
+        return;
+    }
+
+    if (_approval.status === 'approved') {
+        const when = _approval.approved_at
+            ? new Date(_approval.approved_at).toLocaleDateString('ru-RU')
+            : '';
+        badge.textContent = `✓ Утверждён ${when}`;
+        badge.style.display    = 'inline-block';
+        badge.style.background = '#1D9E75';
+        badge.style.color      = '#fff';
+        if (approveBtn)   approveBtn.style.display   = 'none';
+        if (unapproveBtn) unapproveBtn.style.display = 'inline-flex';
+        if (addPersonBtn) addPersonBtn.style.display = 'none';
+    } else {
+        badge.textContent = '✎ Черновик';
+        badge.style.display    = 'inline-block';
+        badge.style.background = '#FFC107';
+        badge.style.color      = '#5B4200';
+        if (approveBtn)   approveBtn.style.display   = 'inline-flex';
+        if (unapproveBtn) unapproveBtn.style.display = 'none';
+        if (addPersonBtn) addPersonBtn.style.display = '';
+    }
+}
+
+async function _approveCurrentMonth() {
+    if (!_currentId) return;
+    if (!confirm(
+        'Утвердить график за этот месяц?\n\n' +
+        'После утверждения будет зафиксирован текущий состав и все ' +
+        'проставленные отметки. Изменить график можно будет через ' +
+        'кнопку «✎ Редактировать» — это снимет утверждение.'
+    )) return;
+    try {
+        _approval = await api.post(
+            `/dept/schedules/${_currentId}/approval?year=${_viewYear}&month=${_viewMonth}`
+        );
+        _publishDraftFlag();
+        _renderApprovalUI();
+        _renderGrid();
+        window.showSnackbar?.('График утверждён', 'success');
+    } catch (err) {
+        window.showSnackbar?.(`Ошибка утверждения: ${err?.message || err}`, 'error');
+    }
+}
+
+async function _unapproveCurrentMonth() {
+    if (!_currentId) return;
+    if (!confirm(
+        'Вернуть в режим редактирования?\n\n' +
+        'Snapshot утверждённого месяца будет удалён. После изменений ' +
+        'нажмите «📌 Утвердить» заново.'
+    )) return;
+    try {
+        await api.delete(
+            `/dept/schedules/${_currentId}/approval?year=${_viewYear}&month=${_viewMonth}`
+        );
+        _approval = { status: 'draft', approved_at: null, approved_by: null };
+        _publishDraftFlag();
+        _renderApprovalUI();
+        _renderGrid();
+        window.showSnackbar?.('Вы в режиме редактирования', 'info');
+    } catch (err) {
+        window.showSnackbar?.(`Ошибка: ${err?.message || err}`, 'error');
+    }
 }
 
 async function _loadPersons() {
@@ -224,45 +349,25 @@ async function _loadPersons() {
 }
 
 function _showPersonSearch() {
-    const wrap = document.getElementById('dept-duty-person-search-wrap');
+    const wrap  = document.getElementById('dept-duty-person-search-wrap');
+    const input = document.getElementById('dept-duty-person-search-input');
     wrap?.classList.remove('hidden');
-    document.getElementById('dept-duty-person-search-input')?.focus();
-}
-
-let _searchTimer = null;
-async function _handlePersonSearch(e) {
-    clearTimeout(_searchTimer);
-    const q = e.target.value.trim();
-    const results = document.getElementById('dept-duty-person-results');
-    if (!results) return;
-    if (q.length < 2) { results.innerHTML = ''; return; }
-
-    _searchTimer = setTimeout(async () => {
-        try {
-            // Ищем только своих людей (persons фильтруются по department на бэке)
-            const persons = await api.get(`/persons/search?q=${encodeURIComponent(q)}&limit=8`);
-            results.innerHTML = persons.map(p => `
-                <div class="duty-person-result" data-pid="${p.id}"
-                     style="padding:6px 10px; cursor:pointer; border-bottom:1px solid var(--md-outline-variant); font-size:0.85rem;">
-                    <strong>${esc(p.full_name)}</strong>
-                    ${p.rank ? `<span style="color:var(--md-on-surface-hint); margin-left:6px;">${esc(p.rank)}</span>` : ''}
-                </div>
-            `).join('');
-            results.querySelectorAll('.duty-person-result').forEach(el => {
-                el.addEventListener('click', () => _addPerson(parseInt(el.dataset.pid)));
-            });
-        } catch { results.innerHTML = ''; }
-    }, 250);
+    if (input) input.value = '';
+    input?.focus();
 }
 
 async function _addPerson(personId) {
     if (!_currentId) return;
+    if (_isReadOnly()) {
+        window.showSnackbar?.('График утверждён. Нажмите «✎ Редактировать» чтобы изменить.', 'error');
+        return;
+    }
     try {
         await api.post(`/dept/schedules/${_currentId}/persons`, { person_id: personId });
         window.showSnackbar?.('Человек добавлен в график', 'success');
+        const input = document.getElementById('dept-duty-person-search-input');
+        if (input) input.value = '';
         document.getElementById('dept-duty-person-search-wrap')?.classList.add('hidden');
-        document.getElementById('dept-duty-person-search-input').value = '';
-        document.getElementById('dept-duty-person-results').innerHTML = '';
         await _loadPersonsAndMarks();
     } catch (err) {
         const msg = err?.status === 409 ? 'Уже в графике' : `Ошибка: ${err?.message || err}`;
@@ -286,7 +391,12 @@ function _changeMonth(delta) {
     _viewMonth += delta;
     if (_viewMonth > 12) { _viewMonth = 1; _viewYear++; }
     if (_viewMonth < 1)  { _viewMonth = 12; _viewYear--; }
-    if (_currentId) _loadMarksAndRender();
+    if (_currentId) _loadApprovalAndRender();
+}
+
+async function _loadApprovalAndRender() {
+    await _loadApproval();
+    await _loadMarksAndRender();
 }
 
 async function _loadMarksAndRender() {
@@ -310,7 +420,12 @@ function _renderGrid() {
     const table = document.getElementById('dept-duty-grid-table');
     if (!label || !table) return;
 
+    _renderApprovalUI();
     _renderModeSwitcher();
+    const readOnly = _isReadOnly();
+    // Режим-переключатель N/U/V нужен только для редактирования
+    const modeGroup = document.querySelector('#dept-duty-grid-container .duty-mode-group');
+    if (modeGroup) modeGroup.style.display = readOnly ? 'none' : '';
 
     const monthNames = ['Январь','Февраль','Март','Апрель','Май','Июнь',
                         'Июль','Август','Сентябрь','Октябрь','Ноябрь','Декабрь'];
@@ -410,8 +525,9 @@ function _renderGrid() {
             <td class="duty-summary-td"><span class="duty-summary-td__num duty-summary-td__num--hours">${sum.overtime}</span></td>
             <td class="duty-summary-td"><span class="duty-summary-td__num">${sum.leave}/${sum.vacation}</span></td>
             <td style="text-align:center;">
-                <button class="btn btn-danger btn-xs dept-duty-remove-person"
-                        data-pid="${p.person_id}" type="button" title="Убрать из графика">✕</button>
+                ${readOnly ? '' :
+                    `<button class="btn btn-danger btn-xs dept-duty-remove-person"
+                             data-pid="${p.person_id}" type="button" title="Убрать из графика">✕</button>`}
             </td>
         </tr>`;
     }).join('')}
@@ -423,11 +539,13 @@ function _renderGrid() {
     table.innerHTML = thead + tbody;
     table.className = 'duty-grid';
 
-    table.querySelectorAll('.duty-grid__cell').forEach(cell => {
-        cell.addEventListener('click', () => {
-            _onCellClick(cell.dataset.date, parseInt(cell.dataset.pid), cell);
+    if (!readOnly) {
+        table.querySelectorAll('.duty-grid__cell').forEach(cell => {
+            cell.addEventListener('click', () => {
+                _onCellClick(cell.dataset.date, parseInt(cell.dataset.pid), cell);
+            });
         });
-    });
+    }
     table.querySelectorAll('.dept-duty-remove-person').forEach(btn => {
         btn.addEventListener('click', () => _removePerson(parseInt(btn.dataset.pid)));
     });
@@ -508,6 +626,19 @@ async function _applyVacationRange(personId, startIso, endIso) {
 
 async function _toggleMark(date, personId, markType = MARK_DUTY) {
     if (!_currentId) return;
+    // Защита: нельзя ставить наряд на день отпуска. Сначала снять отпуск.
+    if (markType === MARK_DUTY) {
+        const existing = _marks.find(
+            m => m.person_id === personId && m.duty_date === date
+        );
+        if (existing && existing.mark_type === MARK_VACATION) {
+            window.showSnackbar?.(
+                'На день отпуска нельзя ставить наряд. Сначала снимите отпуск.',
+                'error',
+            );
+            return;
+        }
+    }
     try {
         const result = await api.post(`/dept/schedules/${_currentId}/marks`, {
             person_id: personId,

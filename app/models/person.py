@@ -35,6 +35,13 @@ class Person(Base):
     phone          = Column(String(50),  nullable=True)   # номер телефона
     notes          = Column(Text,        nullable=True)   # произвольная заметка
 
+    # ── Статус увольнения ────────────────────────────────────────────────────
+    # NULL  → активный сотрудник (по умолчанию).
+    # NOT NULL → дата увольнения; запись сохраняется ради истории
+    #           (duty_marks и slots сохраняют ссылки / денормализованные ФИО).
+    # Меняется только через админский endpoint /persons/{id}/fire|unfire.
+    fired_at = Column(DateTime(timezone=True), nullable=True)
+
     # ── Служебные ────────────────────────────────────────────────────────────
     created_at = Column(
         DateTime(timezone=True),

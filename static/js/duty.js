@@ -4,6 +4,7 @@
  */
 
 import { api } from './api.js';
+import { attach as attachFio } from './fio_autocomplete.js';
 import {
     MARK_DUTY, MARK_LEAVE, MARK_VACATION, MARK_LETTER, MARK_LABEL,
     getHolidaysMap, hoursForDate, isWeekendOrHoliday,
@@ -22,7 +23,8 @@ let _positions      = [];
 let _holidays       = new Map();
 let _currentMode    = MARK_DUTY;   // активный режим: N / U / V (vacation start)
 let _vacationStart  = null;        // personId — ждём вторую дату для диапазона
-let _searchTimeout  = null;
+// Статус утверждения (_currentId, _year, _month). null → ещё не загружен.
+let _approval       = null;
 
 // ─── Init ─────────────────────────────────────────────────────────────────────
 
@@ -59,8 +61,23 @@ export function initDuty() {
             }
         });
 
-    document.getElementById('duty-person-search-input')
-        ?.addEventListener('input', (e) => _onPersonSearch(e.target.value));
+    // Единый автокомплит ФИО: при выборе — добавляем человека в график
+    // (admin видит всех в подсказках).
+    const searchInput = document.getElementById('duty-person-search-input');
+    if (searchInput) {
+        attachFio(searchInput, {
+            container: searchInput.parentElement, // .duty-person-search wrap
+            emptyHint: 'Не найдено',
+            onSelect: (person) => {
+                _addPersonToSchedule(person.id);
+            },
+        });
+    }
+
+    document.getElementById('duty-approve-btn')
+        ?.addEventListener('click', _approveCurrentMonth);
+    document.getElementById('duty-unapprove-btn')
+        ?.addEventListener('click', _unapproveCurrentMonth);
 
     document.getElementById('duty-create-position')
         ?.addEventListener('change', () => _suggestTitle());
@@ -223,17 +240,21 @@ async function _loadGrid() {
     document.getElementById('duty-person-search-wrap')?.classList.add('hidden');
 
     try {
-        const [persons, marks, holidays] = await Promise.all([
+        const [persons, marks, holidays, approval] = await Promise.all([
             api.get(`/admin/schedules/${_currentId}/persons`),
             api.get(`/admin/schedules/${_currentId}/marks?year=${_year}&month=${_month}`),
             getHolidaysMap(_year),
+            api.get(`/admin/schedules/${_currentId}/approval?year=${_year}&month=${_month}`)
+                .catch(() => ({ status: 'draft', approved_at: null, approved_by: null })),
         ]);
         _currentPersons = persons;
         _currentMarks   = marks;
         _holidays       = holidays;
+        _approval       = approval;
         console.log('[duty] Grid loaded — persons:', _currentPersons.length,
                     'marks:', _currentMarks.length,
-                    'holidays:', _holidays.size);
+                    'holidays:', _holidays.size,
+                    'approval:', _approval?.status);
     } catch (err) {
         console.error('[duty] _loadGrid error:', err);
         window.showSnackbar?.('Ошибка загрузки данных графика', 'error');
@@ -244,6 +265,82 @@ async function _loadGrid() {
     _renderMonthLabel();
     _renderGrid();
     document.getElementById('duty-grid-loading')?.classList.add('hidden');
+}
+
+function _isReadOnly() {
+    return _approval && _approval.status === 'approved';
+}
+
+function _renderApprovalUI() {
+    const badge       = document.getElementById('duty-approval-badge');
+    const approveBtn  = document.getElementById('duty-approve-btn');
+    const unapproveBtn= document.getElementById('duty-unapprove-btn');
+    const addPersonBtn= document.getElementById('duty-add-person-btn');
+    if (!badge) return;
+
+    if (!_approval) {
+        badge.style.display = 'none';
+        if (approveBtn)   approveBtn.style.display   = 'none';
+        if (unapproveBtn) unapproveBtn.style.display = 'none';
+        return;
+    }
+
+    if (_approval.status === 'approved') {
+        const when = _approval.approved_at
+            ? new Date(_approval.approved_at).toLocaleDateString('ru-RU')
+            : '';
+        const who = _approval.approved_by ? ` · ${_approval.approved_by}` : '';
+        badge.textContent = `✓ Утверждён ${when}${who}`;
+        badge.style.display    = 'inline-block';
+        badge.style.background = '#1D9E75';
+        badge.style.color      = '#fff';
+        if (approveBtn)   approveBtn.style.display   = 'none';
+        if (unapproveBtn) unapproveBtn.style.display = 'inline-flex';
+        if (addPersonBtn) addPersonBtn.style.display = 'none';
+    } else {
+        badge.textContent = '✎ Черновик';
+        badge.style.display    = 'inline-block';
+        badge.style.background = '#FFC107';
+        badge.style.color      = '#5B4200';
+        if (approveBtn)   approveBtn.style.display   = 'inline-flex';
+        if (unapproveBtn) unapproveBtn.style.display = 'none';
+        if (addPersonBtn) addPersonBtn.style.display = '';
+    }
+}
+
+async function _approveCurrentMonth() {
+    if (!_currentId) return;
+    if (!confirm(
+        'Утвердить график за этот месяц?\n\n' +
+        'Будет зафиксирован текущий состав и все проставленные отметки. ' +
+        'Чтобы изменить — нажмите «✎ Редактировать».'
+    )) return;
+    try {
+        _approval = await api.post(
+            `/admin/schedules/${_currentId}/approval?year=${_year}&month=${_month}`
+        );
+        _renderApprovalUI();
+        _renderGrid();
+        window.showSnackbar?.('График утверждён', 'success');
+    } catch (err) {
+        window.showSnackbar?.(`Ошибка утверждения: ${err?.message || err}`, 'error');
+    }
+}
+
+async function _unapproveCurrentMonth() {
+    if (!_currentId) return;
+    if (!confirm('Вернуть в режим редактирования? Snapshot будет удалён.')) return;
+    try {
+        await api.delete(
+            `/admin/schedules/${_currentId}/approval?year=${_year}&month=${_month}`
+        );
+        _approval = { status: 'draft', approved_at: null, approved_by: null };
+        _renderApprovalUI();
+        _renderGrid();
+        window.showSnackbar?.('Режим редактирования', 'info');
+    } catch (err) {
+        window.showSnackbar?.(`Ошибка: ${err?.message || err}`, 'error');
+    }
 }
 
 function _renderMonthLabel() {
@@ -261,7 +358,14 @@ function _renderGrid() {
     const table = document.getElementById('duty-grid-table');
     if (!table) return;
 
+    _renderApprovalUI();
     _renderModeSwitcher();
+    const readOnly = _isReadOnly();
+    // В approved-режиме прячем переключатель N/У/О.
+    // Селектор привязан к #duty-grid-container — иначе находили dept-toolbar
+    // (он идёт раньше в DOM) и трогали dept вместо admin.
+    const modeGroup = document.querySelector('#duty-grid-container .duty-mode-group');
+    if (modeGroup) modeGroup.style.display = readOnly ? 'none' : '';
 
     const days  = _daysInMonth(_year, _month);
     const today = new Date();
@@ -385,9 +489,11 @@ function _renderGrid() {
         return `<tr data-person-id="${p.person_id}">
             <td class="duty-grid__name-cell duty-name-td">
                 <div class="duty-grid__name-wrap">
+                    ${readOnly ? '' : `
                     <button class="duty-grid__remove-person"
                             data-remove-person="${p.person_id}"
                             title="Убрать из графика">✕</button>
+                    `}
                     <div class="duty-grid__name-info">
                         ${rankBadge}
                         <span class="duty-grid__fullname">${_esc(p.full_name)}</span>
@@ -424,8 +530,8 @@ function _renderGrid() {
         </thead>
         <tbody>${rows || emptyRow}</tbody>`;
 
-    // Делегированные события
-    table.onclick = async (e) => {
+    // Делегированные события (только в draft — approved режим read-only)
+    table.onclick = readOnly ? null : async (e) => {
         const cell      = e.target.closest('.duty-grid__cell');
         const removeBtn = e.target.closest('.duty-grid__remove-person');
 
@@ -446,7 +552,11 @@ function _renderGrid() {
 
 // ─── Переключатель режимов (Н / У / Отпуск) ────────────────────────────────
 function _renderModeSwitcher() {
-    const toolbar = document.querySelector('.duty-grid-toolbar');
+    // ВАЖНО: селектор ограничен #duty-grid-container. Раньше брался
+    // первый .duty-grid-toolbar в DOM — а это dept-toolbar (он идёт
+    // раньше в index.html), поэтому кнопки режимов уходили в dept
+    // и в admin-графике их не было видно.
+    const toolbar = document.querySelector('#duty-grid-container .duty-grid-toolbar');
     if (!toolbar) return;
     if (toolbar.querySelector('.duty-mode-group')) return;   // уже отрисован
 
@@ -536,6 +646,20 @@ async function _applyVacationRange(personId, startIso, endIso) {
 }
 
 async function _toggleMark(personId, dateStr, markType = MARK_DUTY) {
+    // Защита: нельзя ставить наряд на день, где у человека отпуск.
+    // Сначала надо снять/изменить отпуск, потом уже ставить наряд.
+    if (markType === MARK_DUTY) {
+        const existing = _currentMarks.find(
+            m => m.person_id === personId && m.duty_date === dateStr
+        );
+        if (existing && existing.mark_type === MARK_VACATION) {
+            window.showSnackbar?.(
+                'На день отпуска нельзя ставить наряд. Сначала снимите отпуск.',
+                'error',
+            );
+            return;
+        }
+    }
     try {
         const res = await api.post(`/admin/schedules/${_currentId}/marks`, {
             person_id: personId,
@@ -599,49 +723,15 @@ function _showGridEmpty() {
 }
 
 // ─── Person search ────────────────────────────────────────────────────────────
-
-function _onPersonSearch(query) {
-    clearTimeout(_searchTimeout);
-    const results = document.getElementById('duty-person-results');
-    if (!results) return;
-
-    if (query.trim().length < 2) {
-        results.innerHTML = '';
-        return;
-    }
-
-    _searchTimeout = setTimeout(async () => {
-        try {
-            const persons = await api.get(`/persons/search?q=${encodeURIComponent(query)}&limit=10`);
-            if (persons.length === 0) {
-                results.innerHTML = '<div style="padding:8px 12px;color:var(--md-on-surface-hint);font-size:0.8rem;">Не найдено</div>';
-                return;
-            }
-            results.innerHTML = persons.map(p => `
-                <div class="duty-person-result" data-person-id="${p.id}">
-                    <span class="duty-person-result__name">${_esc(p.full_name)}</span>
-                    ${p.rank ? `<span class="duty-person-result__rank">${_esc(p.rank)}</span>` : ''}
-                </div>
-            `).join('');
-
-            results.onclick = async (e) => {
-                const row = e.target.closest('.duty-person-result');
-                if (!row) return;
-                const pid = parseInt(row.dataset.personId);
-                await _addPersonToSchedule(pid);
-                document.getElementById('duty-person-search-input').value = '';
-                results.innerHTML = '';
-                document.getElementById('duty-person-search-wrap')?.classList.add('hidden');
-            };
-        } catch (err) {
-            console.error('[duty] person search error:', err);
-        }
-    }, 250);
-}
+// Поиск с подсказками делает fio_autocomplete (см. _bindUI),
+// здесь — только добавление выбранного в график.
 
 async function _addPersonToSchedule(personId) {
     try {
         await api.post(`/admin/schedules/${_currentId}/persons`, { person_id: personId });
+        const input = document.getElementById('duty-person-search-input');
+        if (input) input.value = '';
+        document.getElementById('duty-person-search-wrap')?.classList.add('hidden');
         await _loadGrid();
         window.showSnackbar?.('Человек добавлен в график', 'success');
     } catch (err) {

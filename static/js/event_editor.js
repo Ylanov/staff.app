@@ -16,6 +16,7 @@
 
 import { api } from './api.js';
 import { formatRole } from './ui.js';
+import { attach as attachFio } from './fio_autocomplete.js';
 
 const WEEKDAYS_FULL = [
     'Воскресенье', 'Понедельник', 'Вторник', 'Среда',
@@ -54,7 +55,6 @@ const _state = {
     positions:   [],                // справочник должностей
     departments: [],                // список username'ов department-пользователей
     saving:      new Set(),         // id слотов сейчас в процессе сохранения
-    suggestTimer: null,
 };
 
 // ─── Точка входа ───────────────────────────────────────────────────────────
@@ -165,6 +165,10 @@ function _setStatus(kind) {
 
 // ─── Рендер содержимого ────────────────────────────────────────────────────
 function _renderContent() {
+    // Уничтожаем старые instances autocomplete'а до перезаписи innerHTML.
+    // Иначе висят глобальные document-listener'ы и бокс-элементы.
+    _detachFioSuggest();
+
     const ev      = _state.event;
     const subtitle = document.getElementById('evt-edit-subtitle');
     const title    = document.querySelector('#evt-edit-header .evt-edit__title');
@@ -263,7 +267,9 @@ function _renderCell(col, slot) {
         return `<td><select class="evt-edit__input" data-field="department">${opts}</select></td>`;
     }
 
-    // Текстовые поля: full_name с suggest, остальные — обычный input
+    // Текстовые поля: full_name с suggest, остальные — обычный input.
+    // Dropdown подсказок создаёт FioAutocomplete (см. _attachFioSuggest).
+    // Якорный td должен быть position:relative, иначе dropdown вылетит.
     const key   = col.key;
     const val   = (key in slot) ? (slot[key] ?? '')
                                 : (slot.extra_data?.[key] ?? '');
@@ -272,9 +278,6 @@ function _renderCell(col, slot) {
         <td${key === 'full_name' ? ' style="position:relative;"' : ''}>
             <input type="text" class="evt-edit__input"
                    data-field="${_esc(key)}" value="${_esc(val)}" ${extra}>
-            ${key === 'full_name'
-                ? `<div class="fio-suggest-box hidden" id="evt-edit-suggest-${slot.id}"></div>`
-                : ''}
         </td>
     `;
 }
@@ -406,96 +409,42 @@ async function _reloadFromServer() {
 }
 
 // ─── FIO suggest (подсказки из общей базы) ─────────────────────────────────
+// Используем единый компонент fio_autocomplete — один и тот же UX везде.
+// При выборе подставляем ФИО/звание/№ документа из предложенного Person
+// и сразу триггерим сохранение слота (как делала старая кастомная версия).
 function _attachFioSuggest() {
     const tbody = document.getElementById('evt-edit-tbody');
     if (!tbody) return;
 
-    tbody.addEventListener('input', (e) => {
-        const input = e.target.closest('[data-fio-input]');
-        if (!input) return;
+    tbody.querySelectorAll('[data-fio-input]').forEach(input => {
+        if (input.__fioAc) return; // уже подвязан
         const tr = input.closest('tr[data-slot-id]');
         if (!tr) return;
-        const slotId = tr.dataset.slotId;
-        const box    = document.getElementById(`evt-edit-suggest-${slotId}`);
-        if (!box) return;
 
-        clearTimeout(_state.suggestTimer);
-        const q = input.value.trim();
-        if (q.length < 2) {
-            box.classList.add('hidden');
-            box.innerHTML = '';
-            return;
-        }
-
-        _state.suggestTimer = setTimeout(async () => {
-            try {
-                // rank/doc_number с того же слота — повышают match_score
-                const rankInp = tr.querySelector('[data-field="rank"]');
-                const docInp  = tr.querySelector('[data-field="doc_number"]');
-                const params = new URLSearchParams({ full_name: q });
-                if (rankInp?.value.trim()) params.append('rank',       rankInp.value.trim());
-                if (docInp?.value.trim())  params.append('doc_number', docInp.value.trim());
-                const items = await api.get(`/persons/suggest?${params.toString()}`);
-                _renderSuggestions(box, tr, items);
-            } catch (_) {
-                box.classList.add('hidden');
-            }
-        }, 300);
-    });
-
-    // Закрываем dropdown при клике вне
-    document.addEventListener('click', (e) => {
-        document.querySelectorAll('[id^="evt-edit-suggest-"]').forEach(box => {
-            if (!box.contains(e.target) && !e.target.matches('[data-fio-input]')) {
-                box.classList.add('hidden');
-            }
+        attachFio(input, {
+            container: input.parentElement, // td[position:relative]
+            getExtraParams: () => ({
+                rank:       tr.querySelector('[data-field="rank"]')?.value.trim()       || '',
+                doc_number: tr.querySelector('[data-field="doc_number"]')?.value.trim() || '',
+            }),
+            onSelect: (person) => {
+                const setField = (name, val) => {
+                    const i = tr.querySelector(`[data-field="${name}"]`);
+                    if (i && val) i.value = val;
+                };
+                setField('full_name',  person.full_name);
+                setField('rank',       person.rank);
+                setField('doc_number', person.doc_number);
+                _saveSlot(tr);
+            },
         });
     });
 }
 
-function _renderSuggestions(box, tr, items) {
-    if (!items || items.length === 0) {
-        box.classList.add('hidden');
-        box.innerHTML = '';
-        return;
-    }
-    box.innerHTML = items.map(p => {
-        const dept = p.department
-            ? `<span class="fio-dept">(${_esc(p.department)})</span>`
-            : '<span class="fio-dept">(общий)</span>';
-        const score = p.is_exact
-            ? '<span class="fio-badge fio-badge-exact">уже в базе</span>'
-            : `<span class="fio-badge fio-badge-score">${p.match_score}%</span>`;
-        const extra = [p.rank, p.doc_number].filter(Boolean).map(_esc).join(' · ');
-        return `
-            <div class="fio-suggest-item"
-                 data-fio="${_esc(p.full_name)}"
-                 data-rank="${_esc(p.rank || '')}"
-                 data-doc="${_esc(p.doc_number || '')}">
-                <div class="fio-suggest-line">
-                    <span class="fio-name">${_esc(p.full_name)}</span>
-                    ${score}${dept}
-                </div>
-                ${extra ? `<div class="fio-suggest-extra">${extra}</div>` : ''}
-            </div>
-        `;
-    }).join('');
-    box.classList.remove('hidden');
-
-    box.querySelectorAll('.fio-suggest-item').forEach(item => {
-        item.addEventListener('click', () => {
-            // Подставляем все три поля сразу и триггерим blur → save
-            const setField = (name, val) => {
-                const i = tr.querySelector(`[data-field="${name}"]`);
-                if (i && val) i.value = val;
-            };
-            setField('full_name',  item.dataset.fio);
-            setField('rank',       item.dataset.rank);
-            setField('doc_number', item.dataset.doc);
-            box.classList.add('hidden');
-            _saveSlot(tr);
-        });
-    });
+function _detachFioSuggest() {
+    document
+        .querySelectorAll('#evt-edit-tbody [data-fio-input]')
+        .forEach(inp => inp.__fioAc?.destroy());
 }
 
 // ─── WebSocket обновления от других юзеров ─────────────────────────────────

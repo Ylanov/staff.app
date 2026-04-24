@@ -72,13 +72,25 @@ export async function handleCreateEvent() {
 }
 
 export async function handleAddGroup() {
-    const eventId   = el('group-event-id').value;
-    const groupName = el('group-name').value.trim();
-    if (!eventId || !groupName) return showError('Выберите список и введите название группы');
+    // Группа добавляется в текущий открытый в редакторе шаблон —
+    // пользователь сначала выбирает шаблон, потом внизу таблицы пишет
+    // имя новой группы. Отдельный dropdown «Список» убран, поскольку
+    // контекст шаблона уже есть (currentEditorEventId).
+    if (!currentEditorEventId) {
+        return showError('Сначала откройте шаблон в редакторе');
+    }
+    const input = el('editor-new-group-name');
+    const groupName = input?.value.trim();
+    if (!groupName) {
+        return showError('Введите название группы');
+    }
     try {
-        await api.post(`/admin/events/${eventId}/groups`, { name: groupName, order_num: 1 });
+        await api.post(`/admin/events/${currentEditorEventId}/groups`,
+                       { name: groupName, order_num: 1 });
         notify('Группа добавлена!');
-        el('group-name').value = '';
+        if (input) input.value = '';
+        // Перерисуем редактор чтобы новая группа сразу появилась в таблице
+        await renderAdminEditor(currentEditorEventId, true);
     } catch (e) { console.error('handleAddGroup:', e); showError('Ошибка добавления группы'); }
 }
 

@@ -41,9 +41,17 @@ from app.db.database import get_db
 from app.models.user import User
 from app.models.event import Event, Group, Slot, Position
 from app.models.person import Person
-from app.models.duty import DutySchedule, DutySchedulePerson, DutyMark
+from app.models.duty import (
+    DutySchedule, DutySchedulePerson, DutyMark,
+    DutyScheduleApproval, DutyScheduleApprovalPerson, DutyScheduleApprovalMark,
+)
 from app.api.dependencies import get_current_active_admin
 from app.core.websockets import manager
+from app.core.duty_approvals import (
+    approve_month   as _approve_month,
+    unapprove_month as _unapprove_month,
+    get_approval    as _get_approval,
+)
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -288,7 +296,7 @@ async def toggle_mark(
         raise HTTPException(status_code=404, detail="Человек не найден")
 
     # Валидация mark_type
-    from app.models.duty import ALL_MARK_TYPES, MARK_DUTY
+    from app.models.duty import ALL_MARK_TYPES, MARK_DUTY, MARK_VACATION
     mark_type = (payload.mark_type or MARK_DUTY).upper()
     if mark_type not in ALL_MARK_TYPES:
         raise HTTPException(status_code=400, detail=f"Недопустимый тип отметки: {mark_type}")
@@ -302,6 +310,18 @@ async def toggle_mark(
         DutyMark.person_id   == payload.person_id,
         DutyMark.duty_date   == payload.duty_date,
     ).first()
+
+    # Защита: нельзя ставить наряд на день отпуска. Смена V→N возможна
+    # только через явное снятие отпуска (клик в режиме O по той же клетке).
+    if (
+        mark_type == MARK_DUTY
+        and existing is not None
+        and existing.mark_type == MARK_VACATION
+    ):
+        raise HTTPException(
+            status_code=409,
+            detail="На день отпуска нельзя ставить наряд. Сначала снимите отпуск.",
+        )
 
     if existing:
         if existing.mark_type == mark_type:
@@ -502,4 +522,187 @@ def diagnose_schedule(
             if not schedule.position_id
             else f"⚠️ Нет списков на дату {check_date} — создайте список с этой датой"
         ),
+    }
+
+
+# ─── Admin approvals (утверждение за месяц + история) ────────────────────────
+
+def _validate_month(year: int, month: int) -> None:
+    if month < 1 or month > 12:
+        raise HTTPException(status_code=400, detail="month должен быть в диапазоне 1..12")
+    if year < 2000 or year > 2100:
+        raise HTTPException(status_code=400, detail="year вне допустимого диапазона")
+
+
+@router.get("/schedules/{schedule_id}/approval")
+def admin_get_approval_status(
+    schedule_id: int,
+    year:  int = Query(...),
+    month: int = Query(...),
+    db:    Session = Depends(get_db),
+    admin: User    = Depends(get_current_active_admin),
+):
+    """Статус за месяц (admin-график)."""
+    schedule = db.query(DutySchedule).filter(DutySchedule.id == schedule_id).first()
+    if not schedule:
+        raise HTTPException(status_code=404, detail="График не найден")
+    _validate_month(year, month)
+
+    a = _get_approval(db, schedule_id, year, month)
+    if a is None:
+        return {"status": "draft", "approved_at": None, "approved_by": None}
+    approver = None
+    if a.approved_by_user_id:
+        u = db.query(User).filter(User.id == a.approved_by_user_id).first()
+        approver = u.username if u else None
+    return {
+        "status":      "approved",
+        "approved_at": a.approved_at.isoformat(),
+        "approved_by": approver,
+    }
+
+
+@router.post("/schedules/{schedule_id}/approval", status_code=201)
+def admin_approve_schedule_month(
+    schedule_id: int,
+    year:  int = Query(...),
+    month: int = Query(...),
+    db:    Session = Depends(get_db),
+    admin: User    = Depends(get_current_active_admin),
+):
+    """Утвердить admin-график за месяц (snapshot состава + отметок)."""
+    schedule = db.query(DutySchedule).filter(DutySchedule.id == schedule_id).first()
+    if not schedule:
+        raise HTTPException(status_code=404, detail="График не найден")
+    _validate_month(year, month)
+
+    try:
+        approval = _approve_month(db, schedule_id, year, month, admin.id)
+    except Exception:
+        db.rollback()
+        raise HTTPException(status_code=500, detail="Не удалось утвердить график")
+
+    db.commit()
+    db.refresh(approval)
+    return {
+        "status":      "approved",
+        "approved_at": approval.approved_at.isoformat(),
+        "approved_by": admin.username,
+    }
+
+
+@router.delete("/schedules/{schedule_id}/approval", status_code=204)
+def admin_unapprove_schedule_month(
+    schedule_id: int,
+    year:  int = Query(...),
+    month: int = Query(...),
+    db:    Session = Depends(get_db),
+    admin: User    = Depends(get_current_active_admin),
+):
+    """Вернуть admin-график за месяц в draft — удаляет snapshot."""
+    schedule = db.query(DutySchedule).filter(DutySchedule.id == schedule_id).first()
+    if not schedule:
+        raise HTTPException(status_code=404, detail="График не найден")
+    _validate_month(year, month)
+
+    removed = _unapprove_month(db, schedule_id, year, month)
+    if not removed:
+        raise HTTPException(status_code=404, detail="График ещё не был утверждён")
+    db.commit()
+
+
+@router.get("/approvals")
+def admin_list_approvals(
+    schedule_id: Optional[int] = Query(None),
+    year:        Optional[int] = Query(None),
+    db:    Session = Depends(get_db),
+    admin: User    = Depends(get_current_active_admin),
+):
+    """
+    Список всех утверждённых snapshot'ов. Опционально фильтруется по графику
+    и году. Сортировка: от новых к старым. Для вкладки «История графиков» —
+    одна строка на (schedule, year, month) с ФИО утвердившего.
+    """
+    q = db.query(DutyScheduleApproval)
+    if schedule_id is not None:
+        q = q.filter(DutyScheduleApproval.schedule_id == schedule_id)
+    if year is not None:
+        q = q.filter(DutyScheduleApproval.year == year)
+    q = q.order_by(
+        DutyScheduleApproval.year.desc(),
+        DutyScheduleApproval.month.desc(),
+        DutyScheduleApproval.approved_at.desc(),
+    )
+    rows = q.all()
+
+    # Собираем username'ы утвердивших одним запросом — чтобы не долбить /users
+    user_ids = {r.approved_by_user_id for r in rows if r.approved_by_user_id}
+    users_by_id: dict[int, str] = {}
+    if user_ids:
+        users = db.query(User).filter(User.id.in_(user_ids)).all()
+        users_by_id = {u.id: u.username for u in users}
+
+    return [
+        {
+            "id":              r.id,
+            "schedule_id":     r.schedule_id,
+            "schedule_title":  r.schedule.title if r.schedule else "—",
+            "schedule_owner":  r.schedule.owner if r.schedule else None,
+            "year":            r.year,
+            "month":           r.month,
+            "approved_at":     r.approved_at.isoformat(),
+            "approved_by":     users_by_id.get(r.approved_by_user_id) if r.approved_by_user_id else None,
+        }
+        for r in rows
+    ]
+
+
+@router.get("/approvals/{approval_id}")
+def admin_get_approval_detail(
+    approval_id: int,
+    db:    Session = Depends(get_db),
+    admin: User    = Depends(get_current_active_admin),
+):
+    """
+    Детали одного snapshot'а: состав (с денормализованными ФИО/званиями)
+    и все отметки за месяц. ФИО возвращаются в том виде, в котором были
+    на момент утверждения — последующие изменения в persons не отражаются.
+    """
+    a = db.query(DutyScheduleApproval).filter(DutyScheduleApproval.id == approval_id).first()
+    if not a:
+        raise HTTPException(status_code=404, detail="Snapshot не найден")
+
+    approver = None
+    if a.approved_by_user_id:
+        u = db.query(User).filter(User.id == a.approved_by_user_id).first()
+        approver = u.username if u else None
+
+    return {
+        "id":              a.id,
+        "schedule_id":     a.schedule_id,
+        "schedule_title":  a.schedule.title if a.schedule else "—",
+        "schedule_owner":  a.schedule.owner if a.schedule else None,
+        "year":            a.year,
+        "month":           a.month,
+        "approved_at":     a.approved_at.isoformat(),
+        "approved_by":     approver,
+        "persons": [
+            {
+                "person_id":  p.person_id,
+                "full_name":  p.full_name,
+                "rank":       p.rank,
+                "doc_number": p.doc_number,
+                "order_num":  p.order_num,
+            }
+            for p in a.persons
+        ],
+        "marks": [
+            {
+                "person_id":         m.person_id,
+                "full_name_at_time": m.full_name_at_time,
+                "duty_date":         m.duty_date.isoformat(),
+                "mark_type":         m.mark_type,
+            }
+            for m in a.marks
+        ],
     }

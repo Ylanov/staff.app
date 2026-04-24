@@ -71,6 +71,20 @@ let _tasksDeptInited   = false;
 let _deptPersonsInited = false;
 
 function switchDeptTab(tab) {
+    // Если сейчас на вкладке "Графики наряда" и текущий месяц в draft —
+    // блокируем уход, пока не будет утверждён. Флаг выставляет dept_duty.js.
+    const dutyPanel = document.getElementById('dept-duty-panel');
+    const dutyVisible = dutyPanel && !dutyPanel.classList.contains('hidden');
+    if (dutyVisible && tab !== 'duty' && window.__deptDutyHasDraft) {
+        alert(
+            'Вы в режиме редактирования графика наряда.\n\n' +
+            'Сначала нажмите «📌 Утвердить», чтобы зафиксировать месяц, ' +
+            'или «✎ Редактировать» если хотите оставить в черновике — ' +
+            'а затем переключайтесь на другую вкладку.'
+        );
+        return;
+    }
+
     document.getElementById('dept-event-cards')?.classList.add('hidden');
     document.getElementById('dept-content')?.classList.add('hidden');
     document.getElementById('dept-combat-calc')?.classList.add('hidden');
@@ -174,8 +188,11 @@ function bindEvents() {
     });
 
     // ── Вкладки панели Администратора ────────────────────────────────────────
-    // Порядок: dashboard, editor, history, users, persons, duty, combat, calendar
-    const tabMap = ['dashboard', 'editor', 'history', 'users', 'persons', 'duty', 'combat', 'calendar'];
+    // Порядок соответствует кнопкам .tab-btn в index.html:
+    const tabMap = [
+        'dashboard', 'editor', 'history', 'users', 'persons',
+        'duty', 'duty-history', 'combat', 'calendar',
+    ];
     document.querySelectorAll('.tab-btn').forEach((btn, index) => {
         btn.addEventListener('click', () => ui.switchAdminTab(tabMap[index] ?? 'dashboard'));
     });
@@ -184,7 +201,13 @@ function bindEvents() {
     document.getElementById('create-event-btn')?.addEventListener('click', admin.handleCreateEvent);
     document.getElementById('instantiate-template-btn')?.addEventListener('click', admin.handleInstantiateTemplate);
     document.getElementById('editor-is-template-cb')?.addEventListener('change', admin.toggleCurrentEventTemplate);
-    document.getElementById('add-group-btn')?.addEventListener('click', admin.handleAddGroup);
+    // Новая кнопка «+ Добавить группу» внутри editor-container (снизу таблицы).
+    // Старый add-group-btn жил в tools-bar panel-group, теперь группы
+    // добавляются прямо в контексте открытого шаблона.
+    document.getElementById('editor-add-group-btn')?.addEventListener('click', admin.handleAddGroup);
+    document.getElementById('editor-new-group-name')?.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') { e.preventDefault(); admin.handleAddGroup(); }
+    });
     document.getElementById('load-editor-btn')?.addEventListener('click', admin.loadAdminEditor);
     // Автозагрузка при выборе шаблона в выпадающем списке
     document.getElementById('editor-event-id')?.addEventListener('change', admin.autoLoadEditorOnChange);
